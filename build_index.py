@@ -6,12 +6,13 @@ Usage:
     python build_index.py my_docs_folder    # uses your own folder instead
 """
 
+import os
 import sys
 
 from rag.ingest import build_chunks
 from rag.store import VectorStore
 
-INDEX_PATH = "index.pkl"
+INDEX_PATH = os.environ.get("INDEX_PATH", "index.pkl")
 
 
 def main():

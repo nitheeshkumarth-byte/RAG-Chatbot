@@ -4,23 +4,22 @@ query.py — ask a question, retrieve relevant chunks, and get a grounded answer
 Usage:
     python query.py "What is HNSW used for?"
 
-Requires GEMINI_API_KEY to be set, either in your environment or in a .env
-file in this folder (see .env.example).
+Uses whichever generation backend GENERATION_BACKEND in .env points to
+(gemini or bedrock) — see .env.example.
 """
 
 import sys
 import os
 
 from dotenv import load_dotenv
-from google import genai
 
+from rag.generate import generate_answer
 from rag.store import VectorStore
 
 load_dotenv()
 
-INDEX_PATH = "index.pkl"
+INDEX_PATH = os.environ.get("INDEX_PATH", "index.pkl")
 TOP_K = 3
-GEMINI_MODEL = "gemini-2.5-flash"
 
 
 def build_prompt(question: str, results) -> str:
@@ -45,13 +44,13 @@ def main():
 
     question = sys.argv[1]
 
-    if not os.environ.get("GEMINI_API_KEY"):
-        print("ERROR: set GEMINI_API_KEY in your environment or .env file first.")
-        return
-
     print("Loading index...")
     store = VectorStore()
     store.load(INDEX_PATH)
+
+    if not store.chunks:
+        print("Index is empty — add a document first (build_index.py, or the web UI).")
+        return
 
     print(f"Retrieving top {TOP_K} chunks for: {question!r}\n")
     results = store.search(question, top_k=TOP_K)
@@ -62,14 +61,14 @@ def main():
 
     prompt = build_prompt(question, results)
 
-    client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=prompt,
-    )
+    try:
+        answer = generate_answer(prompt)
+    except Exception as e:
+        print(f"ERROR generating answer: {e}")
+        return
 
     print("--- Answer ---")
-    print(response.text)
+    print(answer)
 
 
 if __name__ == "__main__":

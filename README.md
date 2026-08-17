@@ -70,6 +70,14 @@ funnel into the same chunk → embed → store pipeline — ingestion is the
 only layer that knows about file formats or URLs.
 ```
 
+## Deploying it
+
+Two deployment paths, same code either way (`GENERATION_BACKEND` in `.env`
+switches between them):
+
+- [`DEPLOY_AWS.md`](./DEPLOY_AWS.md) — EC2 with a plain Python venv, Gemini for generation
+- [`DEPLOY_DOCKER_BEDROCK.md`](./DEPLOY_DOCKER_BEDROCK.md) — EC2 with Docker, Amazon Bedrock (Claude) for generation, no API key to manage (uses an IAM role instead)
+
 ## Things to try next, in order
 
 1. **Break it on purpose.** Ask a question with no answer in the docs — does

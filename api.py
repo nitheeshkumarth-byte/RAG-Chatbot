@@ -14,21 +14,22 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from google import genai
 from pydantic import BaseModel
 
+from rag.generate import generate_answer
 from rag.ingest import chunk_single_document, extract_pdf_text, extract_url_text, slugify
 from rag.store import VectorStore
 
-load_dotenv()  # reads .env into os.environ, e.g. GEMINI_API_KEY
+load_dotenv()  # reads .env into os.environ
 
-INDEX_PATH = "index.pkl"
-DOCS_FOLDER = "sample_docs"
+INDEX_PATH = os.environ.get("INDEX_PATH", "index.pkl")
+DOCS_FOLDER = os.environ.get("DOCS_FOLDER", "sample_docs")
 TOP_K = 3
-GEMINI_MODEL = "gemini-2.5-flash"
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md"}
 
 app = FastAPI()
+
+os.makedirs(DOCS_FOLDER, exist_ok=True)
 
 # Serve everything in static/ (our single-page frontend) at the root URL.
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -43,8 +44,6 @@ try:
     store.load(INDEX_PATH)
 except FileNotFoundError:
     pass
-
-client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
 
 class QueryRequest(BaseModel):
@@ -161,16 +160,15 @@ def ingest_url(req: UrlIngestRequest):
 
 @app.post("/query", response_model=QueryResponse)
 def query(req: QueryRequest):
-    if not os.environ.get("GEMINI_API_KEY"):
-        return QueryResponse(answer="ERROR: GEMINI_API_KEY is not set. Add it to your .env file.")
-
     if not store.chunks:
         return QueryResponse(answer="Nothing's been indexed yet — add a file or URL above first.")
 
     results = store.search(req.question, top_k=TOP_K)
     prompt = build_prompt(req.question, results)
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=prompt,
-    )
-    return QueryResponse(answer=response.text)
+
+    try:
+        answer = generate_answer(prompt)
+    except Exception as e:
+        return QueryResponse(answer=f"ERROR generating answer: {e}")
+
+    return QueryResponse(answer=answer)
