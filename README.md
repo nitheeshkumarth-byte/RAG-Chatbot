@@ -76,7 +76,7 @@ Three deployment paths, same core app either way:
 
 - [`DEPLOY_AWS.md`](./DEPLOY_AWS.md) — EC2 with a plain Python venv, Gemini for generation
 - [`DEPLOY_DOCKER_BEDROCK.md`](./DEPLOY_DOCKER_BEDROCK.md) — EC2 with Docker, Amazon Bedrock (Claude) for generation, no API key to manage (uses an IAM role instead)
-- [`DEPLOY_APPRUNNER_KB.md`](./DEPLOY_APPRUNNER_KB.md) — the fully-managed AWS path: App Runner + Bedrock Knowledge Bases (S3 + Titan embeddings + OpenSearch Serverless) replace the local ingestion/retrieval pipeline entirely (`api_kb.py` instead of `api.py`). Most infrastructure, least code you wrote yourself — see the trade-off note at the top of that guide before committing to it.
+- [`DEPLOY_ECS_EXPRESS_KB.md`](./DEPLOY_ECS_EXPRESS_KB.md) — the fully-managed AWS path: ECS Express Mode + Bedrock Knowledge Bases (S3 + Titan embeddings + OpenSearch Serverless) replace the local ingestion/retrieval pipeline entirely (`api_kb.py` instead of `api.py`). Most infrastructure, least code you wrote yourself — see the trade-off note in that guide before committing to it. (This replaces an earlier App Runner-based plan — App Runner closed to new customers on April 30, 2026.)
 
 ## Things to try next, in order
 
