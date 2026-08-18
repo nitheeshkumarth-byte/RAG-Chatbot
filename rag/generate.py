@@ -27,9 +27,13 @@ def generate_answer(prompt: str) -> str:
 def _generate_gemini(prompt: str) -> str:
     from google import genai
 
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is not set in .env")
+    from rag.config import get_config
+
+    # get_config checks GEMINI_API_KEY directly first (the .env/local path);
+    # only if that's absent does it look at GEMINI_API_KEY_PARAM and fetch
+    # from AWS Parameter Store (the App Runner path). Nothing here changes
+    # for anyone still just using a plain .env file.
+    api_key = get_config("GEMINI_API_KEY", param_name_env="GEMINI_API_KEY_PARAM")
 
     model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
     client = genai.Client(api_key=api_key)
