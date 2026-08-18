@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from typing import List, Tuple
 
 import trafilatura
-from pypdf import PdfReader
 
 
 @dataclass
@@ -29,7 +28,14 @@ def extract_pdf_text(path: str) -> str:
     OCR first (e.g. pytesseract) — extract_text() will return empty strings
     for those pages instead of raising an error, so a PDF that yields
     suspiciously little text is worth checking by eye.
+
+    pypdf is imported here rather than at module level, so that importing
+    this file (e.g. for slugify()/extract_url_text() in api_kb.py, which
+    never parses PDFs locally — the Knowledge Base does that during S3
+    sync) doesn't require pypdf to be installed at all.
     """
+    from pypdf import PdfReader
+
     reader = PdfReader(path)
     pages = [page.extract_text() or "" for page in reader.pages]
     return "\n\n".join(pages)
