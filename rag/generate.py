@@ -44,8 +44,8 @@ def _generate_gemini(prompt: str) -> str:
 def _generate_bedrock(prompt: str) -> str:
     import boto3
 
-    region = os.environ.get("AWS_REGION", "us-east-1")
-    model_id = os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-3-5-haiku-20241022-v1:0")
+    region = os.environ.get("AWS_REGION", "ap-south-2")
+    model_id = os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-haiku-4-5-20251001-v1:0")
 
     # No explicit AWS keys here on purpose: boto3 automatically picks up
     # credentials from (in order) environment variables, ~/.aws/credentials,
