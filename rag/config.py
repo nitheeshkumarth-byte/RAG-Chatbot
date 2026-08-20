@@ -36,7 +36,7 @@ def get_config(name: str, param_name_env: str | None = None, region: str | None 
     if param_name_env:
         param_name = os.environ.get(param_name_env)
         if param_name:
-            resolved_region = region or os.environ.get("AWS_REGION", "ap-south-2")
+            resolved_region = region or os.environ.get("AWS_REGION", "us-east-1")
             ssm = boto3.client("ssm", region_name=resolved_region)
             response = ssm.get_parameter(Name=param_name, WithDecryption=True)
             return response["Parameter"]["Value"]

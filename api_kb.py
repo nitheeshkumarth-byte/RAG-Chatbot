@@ -29,7 +29,7 @@ from rag.kb_client import retrieve, start_ingestion_job
 
 load_dotenv()  # only matters for local testing; App Runner sets real env vars
 
-AWS_REGION = os.environ.get("AWS_REGION", "ap-south-2")
+AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 S3_BUCKET = os.environ.get("S3_BUCKET_NAME")
 TOP_K = 3
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md"}

@@ -5,6 +5,7 @@ python-dotenv>=1.0.0
 fastapi>=0.115.0
 uvicorn>=0.30.0
 pypdf>=4.0.0
+pdfplumber>=0.11.0
 trafilatura>=1.12.0
 python-multipart>=0.0.9
 boto3>=1.34.0

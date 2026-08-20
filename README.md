@@ -34,6 +34,24 @@ python build_index.py path/to/your/folder    # chunks + embeds everything in the
 python query.py "your question"               # ask from the terminal
 ```
 
+### Table extraction (including nested tables)
+
+PDFs with tables get special handling beyond the plain text extraction
+above: `rag/ingest.py` also runs `pdfplumber` over every PDF, detects
+tables, and turns each one into its own dedicated chunk — a clean Markdown
+table instead of the jumbled, row/column-less text that plain extraction
+produces for anything tabular.
+
+For tables that look nested (a cell containing another table inside it —
+something a flat grid parser reliably mangles), it falls back to rendering
+that page as an image and asking a vision-capable model (Gemini) to
+transcribe the table directly, preserving the nested structure. This adds
+one LLM call per nested table found, only when needed — regular flat
+tables never trigger it.
+
+Table chunks show up in `build_index.py`'s output as a separate count
+(`Created N chunks (X text, Y table)`) so you can see how many were found.
+
 ### A note on PDFs
 
 `pypdf` extracts text directly from the PDF's internal structure — it does

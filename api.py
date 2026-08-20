@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from rag.generate import generate_answer
-from rag.ingest import chunk_single_document, extract_pdf_text, extract_url_text, slugify
+from rag.ingest import chunk_single_document, extract_pdf_text, extract_tables_from_pdf, extract_url_text, slugify
 from rag.store import VectorStore
 
 load_dotenv()  # reads .env into os.environ
@@ -131,6 +131,10 @@ async def ingest_file(file: UploadFile = File(...)):
         )
 
     chunks = chunk_single_document(file.filename, text)
+
+    if ext == ".pdf":
+        chunks += extract_tables_from_pdf(dest_path, file.filename)
+
     _add_chunks_to_index(chunks)
 
     return IngestResponse(

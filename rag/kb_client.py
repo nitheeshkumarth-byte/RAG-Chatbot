@@ -23,7 +23,7 @@ class KBResult:
 
 
 def retrieve(question: str, top_k: int = 3) -> List[KBResult]:
-    region = os.environ.get("AWS_REGION", "ap-south-2")
+    region = os.environ.get("AWS_REGION", "us-east-1")
     kb_id = os.environ["KNOWLEDGE_BASE_ID"]
 
     client = boto3.client("bedrock-agent-runtime", region_name=region)
@@ -46,7 +46,7 @@ def start_ingestion_job() -> str:
     """Trigger an on-demand sync so a just-uploaded S3 file gets chunked and
     embedded promptly, instead of waiting for the Knowledge Base's next
     scheduled sync. Called after every upload in api_kb.py."""
-    region = os.environ.get("AWS_REGION", "ap-south-2")
+    region = os.environ.get("AWS_REGION", "us-east-1")
     kb_id = os.environ["KNOWLEDGE_BASE_ID"]
     data_source_id = os.environ["DATA_SOURCE_ID"]
 

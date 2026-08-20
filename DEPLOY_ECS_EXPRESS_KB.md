@@ -17,10 +17,22 @@ Store all work exactly as before. Only the "where does the container
 actually run" step is different. Steps 1–4 below are identical to the
 App Runner guide; skip ahead if you already did them.
 
-**Check your region first**: confirm ECS/Fargate and Bedrock Knowledge
-Bases are both available in whichever region you pick — `ap-south-1`
-(Mumbai) or `us-east-1` are safe choices if you're unsure. Set the same
-region consistently across every step below.
+**About `ap-south-2` (Hyderabad) specifically**, since that's what you're
+using: Bedrock itself and Titan embeddings both work there directly.
+Claude Haiku 4.5, however, is only reachable from `ap-south-2` via
+**Global Cross-Region Inference** — meaning `BEDROCK_MODEL_ID` needs a
+CRIS-prefixed inference profile ID (something like
+`global.anthropic.claude-haiku-4-5-20251001-v1:0`), not the bare
+`anthropic.claude-haiku-4-5-20251001-v1:0` ID. Check the exact string
+under **Bedrock Console → Infer → Cross-region inference** before setting
+it in Step 7 — don't assume the bare ID will work, it likely won't.
+
+Separately, whether **Knowledge Base creation with the OpenSearch
+Serverless "quick create" option is offered in `ap-south-2` at all** isn't
+something documented clearly enough to confirm here — you'll find out for
+certain at Step 2. If that option doesn't appear, `ap-south-1` (Mumbai)
+is the fallback with the longer track record; just keep every region
+setting in this guide consistent with whichever you end up using.
 
 ---
 
@@ -73,7 +85,12 @@ is called a **task role**.
   "Statement": [
     {
       "Effect": "Allow",
-      "Action": ["bedrock:Retrieve", "bedrock-agent:StartIngestionJob"],
+      "Action": [
+        "bedrock:Retrieve",
+        "bedrock-agent:StartIngestionJob",
+        "bedrock:InvokeModel",
+        "bedrock:Converse"
+      ],
       "Resource": "*"
     },
     {
@@ -92,7 +109,10 @@ is called a **task role**.
   ]
 }
 ```
-(Replace `rag-project-docs-yourname` with your actual bucket name.)
+(Replace `rag-project-docs-yourname` with your actual bucket name. The
+`bedrock:InvokeModel`/`bedrock:Converse` actions are only needed if
+`GENERATION_BACKEND=bedrock` — omit them if you're generating with Gemini
+instead and only using Bedrock for retrieval.)
 
 You'll pick this role as the **Task role** in Step 7 — don't confuse it
 with the *Task execution role* ECS also asks for, which is a different,
@@ -134,16 +154,18 @@ No need to rename it.)
 4. **Container port**: `8000`
 5. **Health check path**: `/`
 6. **Environment variables** — add each of these as a plain key/value
-   (none of them are secrets themselves — `GEMINI_API_KEY_PARAM` is just a
+   (none are secrets themselves — `GEMINI_API_KEY_PARAM` is just a
    *pointer* to the real secret in Parameter Store):
 
    | Key | Value |
    |---|---|
-   | `AWS_REGION` | your region, e.g. `ap-south-1` |
+   | `AWS_REGION` | your region, e.g. `ap-south-2` |
    | `KNOWLEDGE_BASE_ID` | from Step 2 |
    | `DATA_SOURCE_ID` | from Step 2 |
    | `S3_BUCKET_NAME` | your bucket name from Step 1 |
-   | `GEMINI_API_KEY_PARAM` | `/rag-project/gemini-api-key` |
+   | `GENERATION_BACKEND` | `bedrock` (or `gemini` — see region note above) |
+   | `BEDROCK_MODEL_ID` | only if `GENERATION_BACKEND=bedrock` — verify the exact ID in the Bedrock Console first (Infer → Cross-region inference); some models need a CRIS-prefixed ID like `global.anthropic...` rather than the bare model ID |
+   | `GEMINI_API_KEY_PARAM` | only if `GENERATION_BACKEND=gemini` — `/rag-project/gemini-api-key` |
 
 7. **Task role**: select `rag-project-task-role` from Step 5 — this is
    what lets `boto3` inside the container call Bedrock/S3/SSM with zero
