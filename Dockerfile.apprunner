@@ -1,0 +1,15 @@
+# This variant runs api_kb.py, which delegates embedding/retrieval to a
+# Bedrock Knowledge Base — so unlike the main Dockerfile, this image never
+# needs sentence-transformers/torch at all. Smaller image, faster builds.
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements-kb.txt .
+RUN pip install --no-cache-dir -r requirements-kb.txt
+
+COPY . .
+
+EXPOSE 8000
+
+CMD ["uvicorn", "api_kb:app", "--host", "0.0.0.0", "--port", "8000"]
