@@ -1,0 +1,679 @@
+\documentclass[11pt,a4paper]{article}
+
+% ---------- Packages ----------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{fancyvrb}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\setlist{topsep=2pt, itemsep=1pt, parsep=0pt}
+
+% ---------- Hyperlinks ----------
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  urlcolor=blue!60!black,
+  citecolor=blue!60!black,
+  pdftitle={Mini RAG Project Documentation},
+  pdfauthor={Project Author}
+}
+
+% ---------- Listings style ----------
+\definecolor{codebg}{RGB}{248,248,248}
+\definecolor{codekeword}{RGB}{62,88,151}
+\definecolor{codecomment}{RGB}{96,140,98}
+\definecolor{codestring}{RGB}{163,23,23}
+
+\lstdefinestyle{pythonstyle}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{codekeword}\bfseries,
+  commentstyle=\color{codecomment}\itshape,
+  stringstyle=\color{codestring},
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{gray!40},
+  breaklines=true,
+  showstringspaces=false,
+  tabsize=4,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=6pt,
+  xleftmargin=14pt,
+  framexleftmargin=14pt,
+  captionpos=b
+}
+
+\lstdefinestyle{bashstyle}{
+  language=bash,
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{gray!40},
+  breaklines=true,
+  showstringspaces=false,
+  tabsize=2,
+  captionpos=b
+}
+
+\lstset{style=pythonstyle}
+
+% ---------- Inline code ----------
+\newcommand{\code}[1]{\texttt{#1}}
+
+% ---------- Title ----------
+\title{\textbf{Mini RAG: A Minimal From-Scratch\\ Retrieval-Augmented Generation Pipeline}\\[4pt]
+\large Project Documentation}
+\author{Project Author}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{center}
+\textit{Keywords: Retrieval-Augmented Generation, Sentence Embeddings,
+Cosine Similarity, FastAPI, Google Gemini, Amazon Bedrock}
+\end{center}
+
+\begin{abstract}
+\noindent
+This document provides complete technical documentation for a minimal,
+from-scratch Retrieval-Augmented Generation (RAG) pipeline. The project
+ingests documents in PDF, plain-text, and Markdown formats as well as web
+articles, splits them into overlapping word-based chunks, embeds each chunk
+locally using a sentence-transformer model, and serves similarity-based
+retrieval over a plain \texttt{numpy} vector store. A generation step then
+produces answers that are grounded exclusively in the retrieved context,
+using either Google Gemini or Amazon Bedrock (Claude) as an interchangeable
+runtime backend. The system exposes both a browser-based user interface and a
+command-line interface. Every stage---chunking, embedding, storage,
+retrieval, and generation---is implemented in readable, dependency-light
+Python with no orchestration framework (such as LangChain) and no dedicated
+vector-database server, making the pipeline fully transparent and easy to
+study, tune, or replace piece by piece. This report covers the system
+architecture, module-by-module reference, configuration, API specification,
+persistence model, containerization, deployment paths, security
+considerations, and known limitations.
+\end{abstract}
+
+\newpage
+\tableofcontents
+\newpage
+
+% =================================================================
+\section{Introduction}
+
+\subsection{What Is Retrieval-Augmented Generation?}
+Retrieval-Augmented Generation (RAG) is a pattern in which a language model
+answers a question using a restricted set of passages retrieved from a
+user-supplied corpus, rather than relying solely on its parametric
+knowledge. A RAG pipeline consists of three principal stages:
+\begin{enumerate}
+  \item \textbf{Ingestion and chunking}: documents are loaded and split into
+        smaller, self-contained text fragments.
+  \item \textbf{Embedding and retrieval}: each fragment is converted into a
+        dense vector; at query time the question is embedded with the same
+        model and the most similar fragments are returned.
+  \item \textbf{Grounded generation}: the retrieved fragments are inserted
+        into a prompt and an LLM produces an answer using only that context.
+\end{enumerate}
+
+\subsection{Project Goals}
+This project implements the full RAG loop from scratch with the explicit
+intention of \emph{seeing every step}. The design decisions follow from this
+goal:
+\begin{itemize}
+  \item \textbf{No orchestration framework} such as LangChain; the pipeline
+        is plain Python.
+  \item \textbf{No vector database server}; a \texttt{numpy} array performs
+        the similarity search and persists to a pickle file
+        (\code{index.pkl}).
+  \item \textbf{Local, free embeddings}; the
+        \texttt{all-MiniLM-L6-v2} sentence-transformer model requires no API
+        key.
+  \item \textbf{Swappable LLM backends}; a single environment variable
+        switches generation between Google Gemini and Amazon Bedrock
+        (Claude) at runtime.
+  \item \textbf{Two interaction surfaces}: a browser UI served by FastAPI
+        and a set of small command-line scripts.
+\end{itemize}
+
+% =================================================================
+\section{System Architecture}
+
+\subsection{High-Level Data Flow}
+Both the browser upload panel and the command-line entry points funnel into
+the same chunk $\rightarrow$ embed $\rightarrow$ store pipeline; ingestion is
+the only layer that is aware of file formats or URLs. Figure~\ref{fig:pipeline}
+illustrates the flow.
+
+\begin{figure}[h]
+\centering
+\begin{Verbatim}[frame=single, fontsize=\small, numbers=none]
+ Browser upload / URL            your_docs/*.md  (CLI path)
+        |                              |
+        v                              v
+   POST /ingest/file |         build_chunks(folder)
+   POST /ingest/url  +----------------> rag/ingest.py
+                                             |  splits each source into
+                                             v  overlapping word chunks
+                                       rag/store.py
+                                             |  embeds each chunk with
+                                             |  all-MiniLM-L6-v2, keeps
+                                             |  vectors in numpy
+                                             v
+                          POST /query OR query.py
+                                             |  embeds the question, finds
+                                             |  the top-3 most similar
+                                             |  chunks (cosine similarity),
+                                             |  builds a grounded prompt
+                                             v
+                                      rag/generate.py
+                                             |  generates an answer via
+                                             |  Gemini or Bedrock
+                                             v
+                                         answer text
+\end{Verbatim}
+\caption{Pipeline data flow.}
+\label{fig:pipeline}
+\end{figure}
+
+\subsection{Repository Layout}
+Table~\ref{tab:repo} lists every file in the repository and its role.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{>{\ttfamily}p{4.4cm} p{10.4cm}}
+\toprule
+\multicolumn{1}{>{\rmfamily}p{4.4cm}}{\textbf{File}} &
+\multicolumn{1}{c}{\textbf{Role}} \\
+\midrule
+api.py            & FastAPI server: REST endpoints plus browser-UI hosting \\
+build\_index.py   & CLI: chunk, embed, and persist an entire folder of documents \\
+query.py          & CLI: ask a question from the terminal \\
+fetch\_url.py     & CLI: download a URL's article text into \texttt{sample\_docs/} \\
+requirements.txt  & Python dependencies with pinned minimum versions \\
+Dockerfile        & Container image definition \\
+.dockerignore     & Files excluded from the Docker image \\
+.env              & Runtime configuration (gitignored; never committed) \\
+.gitignore        & Files ignored by git \\
+index.pkl         & Persisted vector index (pickle format; gitignored) \\
+README.md         & Project documentation (this document's source) \\
+DEPLOY\_AWS.md    & EC2 + venv + Gemini deployment guide \\
+DEPLOY\_DOCKER\_BEDROCK.md & EC2 + Docker + Bedrock deployment guide \\
+rag/\_\_init\_\_.py & Empty package marker \\
+rag/ingest.py     & Document loading and chunking \\
+rag/store.py      & Embedding, similarity search, and persistence \\
+rag/generate.py   & LLM generation (Gemini / Bedrock backends) \\
+static/index.html & Single-page frontend (no build step, no framework) \\
+sample\_docs/     & Sample documents for the CLI path \\
+\bottomrule
+\end{tabular}
+\caption{Repository layout.}
+\label{tab:repo}
+\end{table}
+
+% =================================================================
+\section{Technology Stack}
+Table~\ref{tab:stack} summarizes the tools used and their role in the
+project.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{>{\raggedright}p{3.4cm} >{\raggedright}p{4.6cm} p{7.0cm}}
+\toprule
+\textbf{Tool} & \textbf{Category} & \textbf{Function in this project} \\
+\midrule
+Python $\geq$ 3.11 & Language & Implementation language; the shipped Docker image uses 3.11-slim \\
+FastAPI + uvicorn & Web framework & REST API endpoints; uvicorn is the ASGI server running the app \\
+sentence-transformers & Embedding model & Converts chunks and questions into 384-dimensional dense vectors with \texttt{all-MiniLM-L6-v2} \\
+numpy & Math / storage & Stores all embeddings in one matrix; implements the cosine-similarity search as a dot product; persists via pickle \\
+pypdf & PDF parsing & Extracts raw text, page by page, from text-layer PDFs \\
+trafilatura & Web scraping & Fetches a URL and extracts article text, title, and metadata; strips navigation and ads \\
+google-genai & LLM client & Calls Google Gemini (\texttt{generate\_content}) when $GENERATION\_BACKEND=gemini$ \\
+boto3 & AWS client & Calls the Amazon Bedrock Converse API (Claude) when $GENERATION\_BACKEND=bedrock$; auto-uses IAM role credentials \\
+python-dotenv & Configuration & Loads \code{.env} into environment variables at startup \\
+Docker & Containerization & Reproducible build/deploy of the app (Docker + Bedrock path) \\
+AWS EC2, IAM, systemd & Deployment & Hosts the app on Ubuntu; systemd keeps uvicorn alive; IAM provides Bedrock access without keys \\
+Vanilla HTML/CSS/JS & Frontend & Single-file UI: upload/drag-drop, URL paste, source list, question box, answer rendering \\
+\bottomrule
+\end{tabular}
+\caption{Technology stack.}
+\label{tab:stack}
+\end{table}
+
+% =================================================================
+\section{The RAG Pipeline in Detail}
+
+\subsection{Ingestion (\code{rag/ingest.py})}
+The ingestion layer is format-aware but the rest of the pipeline is not. Its
+public symbols are:
+
+\begin{itemize}
+  \item \code{Chunk} --- a dataclass with fields \code{text} (the fragment),
+        \code{source} (filename the chunk came from), and \code{chunk\_id}
+        (zero-based position within the file).
+  \item \code{extract\_pdf\_text(path)} --- opens a PDF with
+        \texttt{pypdf.PdfReader} and joins every page's extraction with a
+        blank line. Pages without a text layer yield \code{""} rather than an
+        exception.
+  \item \code{slugify(text, max\_len=60)} --- builds a safe filename slug
+        from a title: lowercases, collapses runs of non-alphanumeric
+        characters into hyphens, truncates to \code{max\_len}, and falls
+        back to \code{"page"} if empty.
+  \item \code{extract\_url\_text(url)} --- downloads a page with
+        \texttt{trafilatura.fetch\_url} and extracts the readable article
+        (comments and tables excluded). Raises \code{ValueError} if the page
+        cannot be downloaded or contains no readable content. Returns a
+        \code{(title, text)} tuple.
+  \item \code{load\_documents(folder)} --- returns a list of
+        \code{(filename, text)} pairs for every \code{.md}, \code{.txt}, and
+        \code{.pdf} file in a folder (sorted by filename); other files are
+        skipped silently.
+  \item \code{chunk\_text(text, chunk\_size=500, overlap=50)} --- word-based
+        chunking: splits on whitespace and steps forward \code{chunk\_size}
+        words while re-including the previous \code{overlap} words so that
+        sentences straddling a boundary keep context.
+  \item \code{chunk\_single\_document(name, text, ...)} --- wraps the output
+        of \code{chunk\_text} into \code{Chunk} objects; used both by the
+        folder path and by the API's incremental ingest endpoints.
+  \item \code{build\_chunks(folder, chunk\_size=500, overlap=50)} --- loads
+        every document in a folder and flattens all chunks into one list.
+\end{itemize}
+
+A module-level sanity check is available via \code{python -m rag.ingest},
+which prints the chunk count and a preview of the first two chunks.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lccl}
+\toprule
+\textbf{Entry point} & \textbf{chunk\_size} & \textbf{overlap} & \textbf{Chunk length} \\
+\midrule
+CLI (\code{build\_index.py})            & 300 & 50 & $\approx$ 300 words \\
+Browser/API (\code{api.py} / defaults)  & 500 & 50 & $\approx$ 500 words \\
+\bottomrule
+\end{tabular}
+\caption{Chunk-size discrepancy between the two entry points.}
+\label{tab:chunk}
+\end{table}
+
+As Table~\ref{tab:chunk} highlights, the CLI path and the API path use
+different default chunk sizes; both are internally consistent but produce
+different chunk counts.
+
+\subsection{Embedding and Storage (\code{rag/store.py})}
+\begin{itemize}
+  \item \code{EMBEDDING\_MODEL = "all-MiniLM-L6-v2"} --- a small, fast,
+        free sentence-transformer producing \textbf{384-dimensional},
+        \textbf{normalized} vectors.
+  \item \code{VectorStore} holds a list of \code{Chunk}s and a
+        \texttt{numpy} embedding matrix (\code{embeddings}).
+  \item \code{add(chunks)} --- encodes new texts with
+        \code{normalize\_embeddings=True} and appends them, growing the
+        matrix with \code{np.vstack}.
+  \item \code{search(query, top\_k=3)} --- encodes the query and computes
+        \textbf{cosine similarity} as a matrix--vector dot product (valid
+        because all vectors are normalized). Returns the \code{top\_k}
+        highest-scoring results in descending order.
+  \item \code{sources()} --- returns the deduplicated list of source
+        filenames in insertion (first-seen) order.
+  \item \code{remove\_source(source)} --- deletes every chunk and embedding
+        row belonging to a source.
+  \item \code{save(path)} / \code{load(path)} --- pickles or unpickles the
+        dictionary \code{\{"chunks": [Chunk, ...], "embeddings": ndarray\}}.
+\end{itemize}
+
+\subsection{Generation (\code{rag/generate.py})}
+\code{generate\_answer(prompt)} reads the environment variable
+\code{GENERATION\_BACKEND} (default \code{"gemini"}) and dispatches to one of
+two providers. Both \code{api.py} and \code{query.py} call exactly this one
+function, so the LLM provider can be swapped without touching the rest of the
+pipeline.
+
+\begin{itemize}
+  \item \textbf{Gemini backend}: lazily imports \code{google.genai},
+        requires \code{GEMINI\_API\_KEY}, and calls
+        \code{client.models.generate\_content} with the model named by
+        \code{GEMINI\_MODEL} (default \texttt{gemini-2.5-flash}).
+  \item \textbf{Bedrock backend}: lazily imports \code{boto3} and calls the
+        provider-agnostic Converse API
+        (\code{client.converse}) with an inference cap of 500 tokens
+        (\code{maxTokens}). Credentials are resolved automatically by
+        \texttt{boto3} from environment variables, \code{\textasciitilde{}/.aws/credentials},
+        or an EC2 IAM instance role, so no secret material needs to live in
+        \code{.env} when deployed on EC2.
+\end{itemize}
+
+% =================================================================
+\section{Application Layer}
+
+\subsection{REST Server (\code{api.py})}
+The FastAPI application is created at module scope; the \code{VectorStore}
+and the embedding model are loaded \textbf{once at startup} rather than per
+request, avoiding the multi-second model-load cost on every query. A missing
+\code{index.pkl} is tolerated so the first document can be added from the
+browser. Table~\ref{tab:api} specifies the endpoints; the full request and
+response schemas, including error bodies, are given in
+Section~\ref{sec:api-ref}.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{>{\ttfamily}p{2.6cm} p{4.8cm} p{7.4cm}}
+\toprule
+\textbf{Method/Path} & \textbf{Request} & \textbf{Behavior and response} \\
+\midrule
+GET /                & --- & Serves the single-page frontend \\
+GET /sources         & --- & List of distinct indexed filenames plus total chunk count \\
+POST /ingest/file    & multipart file & Saves, chunks, embeds, persists; returns filename, chunks added, total \\
+POST /ingest/url     & JSON \texttt{\{url\}} & Fetches article, writes file, chunks, embeds, persists \\
+POST /query          & JSON \texttt{\{question\}} & Retrieves top-3 chunks, generates a grounded answer \\
+DELETE /sources/\{filename\} & --- & Removes one source and all its chunks; 404 if not indexed \\
+\bottomrule
+\end{tabular}
+\caption{REST API endpoints.}
+\label{tab:api}
+\end{table}
+
+\subsection{Frontend (\code{static/index.html})}
+The interface is a single HTML file with inline CSS and vanilla JavaScript:
+\begin{itemize}
+  \item A \emph{source panel} with two tabs, \emph{Upload file} (click or
+        drag-and-drop, accepts \code{.pdf}, \code{.txt}, \code{.md}) and
+        \emph{Paste URL}; an ingest-status line; and a list of indexed
+        sources, each with a Remove button.
+  \item A \emph{question bar} and answer area with a pulsing
+        \emph{Searching \& thinking} indicator while a request is in flight.
+  \item All dynamically rendered text (source names, answers) is passed
+        through an \code{escapeHtml} helper (a \code{div.textContent} trick)
+        before being inserted, preventing HTML injection.
+  \item A \code{prefers-reduced-motion} media query disables the loading-dot
+        animation for users who request reduced motion.
+\end{itemize}
+
+\subsection{Command-Line Tools}
+\begin{itemize}
+  \item \code{build\_index.py} --- accepts an optional folder argument
+        (default \code{sample\_docs/}), chunks with
+        \code{chunk\_size=300, overlap=50}, embeds, and persists to
+        \code{index.pkl}. It \emph{rebuilds from scratch} rather than
+        merging with an existing index.
+  \item \code{query.py} --- loads the store, retrieves the top-3 chunks,
+        prints each as \code{[score:.3f] source (chunk id)}, and prints the
+        generated answer.
+  \item \code{fetch\_url.py} --- downloads a URL and writes
+        \code{\# title + Source: url + article text} into
+        \code{sample\_docs/<slug>.txt} for \code{build\_index.py} to pick up.
+\end{itemize}
+
+% =================================================================
+\section{Installation and Usage}
+
+\subsection{Local Setup}
+\begin{lstlisting}[language=bash, style=bashstyle]
+python -m venv .venv
+# Windows:     .venv\Scripts\activate
+# macOS/Linux: source .venv/bin/activate
+pip install -r requirements.txt
+\end{lstlisting}
+
+The first embedding run downloads \texttt{all-MiniLM-L6-v2} from Hugging
+Face (approximately 90\,MB). The generation backend and its key/model must be
+configured in \code{.env} before questions can be answered.
+
+\subsection{Running the Web Application}
+\begin{lstlisting}[language=bash, style=bashstyle]
+uvicorn api:app --reload
+\end{lstlisting}
+Open \textbf{http://localhost:8000}. Add a source (file upload or URL), then
+ask a question grounded only in the added sources.
+
+\subsection{Command-Line Workflow}
+\begin{lstlisting}[language=bash, style=bashstyle]
+python build_index.py path/to/your/folder   # chunk + embed a folder
+python query.py "your question"              # ask from the terminal
+python fetch_url.py https://example.com/post # save an article
+\end{lstlisting}
+
+% =================================================================
+\section{Configuration}
+\code{.env} is read by \code{load\_dotenv()} in both \code{api.py} and
+\code{query.py} and is gitignored. Every variable has a code-level default.
+Table~\ref{tab:env} summarizes all settings.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{>{\ttfamily}p{3.5cm} >{\ttfamily}p{3.6cm} p{7.7cm}}
+\toprule
+\textbf{Variable} & \textbf{Code default} & \textbf{Meaning} \\
+\midrule
+INDEX\_PATH             & index.pkl & Pickle file for the vector index \\
+DOCS\_FOLDER            & sample\_docs & Where uploads and URL extractions are stored \\
+GENERATION\_BACKEND     & gemini    & \code{gemini} or \code{bedrock} \\
+GEMINI\_API\_KEY        & (required) & Google AI Studio key for the Gemini backend \\
+GEMINI\_MODEL           & gemini-2.5-flash & Gemini model name \\
+AWS\_REGION             & us-east-1 & AWS region for Bedrock \\
+BEDROCK\_MODEL\_ID      & anthropic.claude-3-5-haiku-20241022-v1:0 & Bedrock model identifier \\
+\bottomrule
+\end{tabular}
+\caption{Environment-variable configuration.}
+\label{tab:env}
+\end{table}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{>{\ttfamily}p{3.5cm} p{11.3cm}}
+\toprule
+\textbf{Variable} & \textbf{Value shipped in local .env} \\
+\midrule
+GENERATION\_BACKEND & gemini \\
+GEMINI\_MODEL       & gemini-2.5-flash \\
+AWS\_REGION         & ap-south-2 \\
+BEDROCK\_MODEL\_ID  & anthropic.claude-haiku-4-5-20251001-v1:0 \\
+\bottomrule
+\end{tabular}
+\caption{Variables actually set in the provided \code{.env}.}
+\label{tab:env-shipped}
+\end{table}
+
+\textbf{Heads-up}: several scripts and deployment guides reference a
+\code{.env.example} file that is \emph{not} present in the repository;
+a copy of \code{.env} or a manually created \code{.env.example} is needed
+before following the \code{cp .env.example .env} steps in the deployment
+documents.
+
+% =================================================================
+\section{REST API Reference}\label{sec:api-ref}
+
+\subsection{GET /sources}
+Response body:
+\begin{lstlisting}[language=Python, style=pythonstyle]
+{"sources": [<filename>, ...], "total_chunks": <int>}
+\end{lstlisting}
+Returns the deduplicated, insertion-ordered list of indexed filenames and the
+total number of chunks. Empty store yields empty list and zero.
+
+\subsection{POST /ingest/file}
+Multipart form field \code{file}; accepts \code{.pdf}, \code{.txt},
+\code{.md}.
+\begin{itemize}
+  \item 400 --- unsupported extension: \emph{Unsupported file type `ext'. Use
+        .pdf, .txt, or .md.}
+  \item 400 --- no extractable text: \emph{No extractable text found in that
+        file. If it's a scanned PDF, it needs OCR first.}
+\end{itemize}
+On success the file is written into \code{DOCS\_FOLDER}, chunked, embedded,
+and persisted. Response:
+\begin{lstlisting}[language=Python, style=pythonstyle]
+{"filename": <name>, "chunks_added": <int>, "total_chunks": <int>}
+\end{lstlisting}
+
+\subsection{POST /ingest/url}
+JSON body \code{\{"url": "https://..."\}}. Raises 400 with the
+\code{ValueError} message from \code{extract\_url\_text} on failure. Writes
+\code{\# <title> / Source: <url> / <text>} to
+\code{DOCS\_FOLDER/<slug>.txt}, then chunk/embed/persist; response shape as
+above.
+
+\subsection{POST /query}
+JSON body \code{\{"question": "..."\}}.
+\begin{itemize}
+  \item Empty store $\Rightarrow$ 200 with answer \emph{Nothing's been
+        indexed yet --- add a file or URL above first.}
+  \item Retrieves top-3 chunks, builds the grounded prompt, calls
+        \code{generate\_answer}.
+  \item Generation failure $\Rightarrow$ 200 with
+        \code{"ERROR generating answer: \{e\}"} (errors are returned as
+        answers, not as HTTP errors).
+\end{itemize}
+Response: \code{\{"answer": "<generated text>"\}}.
+
+\subsection{DELETE /sources/\{filename\}}
+Removes one source and its chunks/embeddings, persists, and returns
+\code{\{"removed": <filename>, "total_chunks": <int>\}}. 404 with
+\emph{'\texttt{filename}' isn't currently indexed.} if absent.
+
+% =================================================================
+\section{Data Persistence}
+\begin{itemize}
+  \item \textbf{Index file} (\code{index.pkl}): a pickle of
+        \code{\{"chunks": [Chunk, ...], "embeddings": ndarray\}}, saved after
+        every API ingest/delete and by \code{build\_index.py}; loaded once at
+        API startup. Gitignored and excluded from Docker images.
+  \item \textbf{Document folder} (\code{DOCS\_FOLDER}, default
+        \code{sample\_docs/}): uploaded files are stored verbatim; URL
+        ingests write \code{\# title / Source: url / text} files there. This
+        folder is \emph{not} re-ingested automatically at startup --- the
+        index is self-contained.
+  \item \textbf{Memory}: chunks and embeddings live in RAM (numpy arrays)
+        for the process lifetime.
+  \item \textbf{Concurrency}: there is no locking around \code{store.add} /
+        \code{store.save}; concurrent ingests could in principle race on the
+        pickle write. Acceptable for single-user use.
+\end{itemize}
+
+% =================================================================
+\section{Containerization (Docker)}
+The \code{Dockerfile} is based on \code{python:3.11-slim}:
+\begin{enumerate}
+  \item \code{WORKDIR /app}.
+  \item Dependencies are installed first (separate cacheable layer) with
+        \code{pip install --no-cache-dir -r requirements.txt}, so the heavy
+        torch/transformers layer is rebuilt only when requirements change.
+  \item The application code is copied in.
+  \item \code{RUN mkdir -p sample\_docs} ensures the upload folder exists.
+  \item \code{EXPOSE 8000}; \code{CMD ["uvicorn", "api:app", "--host",
+        "0.0.0.0", "--port", "8000"]}.
+\end{enumerate}
+\code{.dockerignore} excludes \code{.env}, \code{index.pkl},
+\code{__pycache__/}, \code{*.pyc}, \code{.venv/}, \code{venv/}, \code{.git/},
+\code{.gitignore}, and all \code{*.md} files --- so local secrets and index
+data are not baked into the image, and configuration is supplied at runtime.
+Build and run:
+\begin{lstlisting}[language=bash, style=bashstyle]
+docker build -t rag-project .
+docker run -d --name rag-app --restart unless-stopped -p 8000:8000 \
+  --env-file .env -v "$(pwd)/data":/app/data rag-project
+\end{lstlisting}
+For the volume mount to persist data, \code{.env} must set
+\code{INDEX\_PATH=/app/data/index.pkl} and
+\code{DOCS\_FOLDER=/app/data/sample\_docs}.
+
+% =================================================================
+\section{Deployment}
+Two deployment paths exist, using identical code; only
+\code{GENERATION\_BACKEND} differs.
+
+\subsection{AWS EC2 with a Python Venv (Gemini)}
+Documented in \code{DEPLOY\_AWS.md}. A single EC2 instance (Ubuntu 22.04,
+\texttt{t3.small}) runs uvicorn under \texttt{systemd} (\code{rag.service})
+for automatic restart on boot or crash. Gemini supplies generation. Covers
+launching the instance, installing dependencies, adding the API key, service
+registration, verification, and optional hardening (Elastic IP, nginx on port
+80, HTTPS via certbot, and S3 for the index).
+
+\subsection{Docker + Amazon Bedrock (Claude)}
+Documented in \code{DEPLOY\_DOCKER\_BEDROCK.md}. The same EC2 host runs the
+app in a Docker container; answers come from Amazon Bedrock using an IAM
+instance role so that \emph{no API key} is managed. Covers the one-time
+Anthropic use-case submission (if required), IAM role creation, Docker
+installation, Bedrock-specific environment configuration, the exact run
+flags, and update procedures.
+
+% =================================================================
+\section{Security and Privacy}
+\begin{itemize}
+  \item \code{.env} and \code{index.pkl} are gitignored and excluded from
+        Docker images.
+  \item The local \code{GEMINI\_API\_KEY} value does not match the usual
+        Google AI Studio (\code{AIza...}) format and may be invalid;
+        a fresh key from Google AI Studio is recommended if authentication
+        errors occur.
+  \item Generation errors are currently returned to the browser as the
+        answer body (\code{ERROR generating answer: ...}), which can leak
+        internal details; logging server-side and returning a generic message
+        is advised before public deployment.
+  \item One of the shipped sample documents
+        (\code{sample\_docs/New Text Document.txt}) contains private
+        personal-note content and should be removed before sharing or
+        deploying this repository.
+\end{itemize}
+
+% =================================================================
+\section{Known Limitations}
+\begin{itemize}
+  \item No OCR --- scanned or image-only PDFs yield no text.
+  \item Fixed-size word chunking only; no structure-aware or semantic
+        chunking.
+  \item Retrieval is top-3 cosine similarity only --- no hybrid (keyword +
+        vector) search, no reranker, no metadata filtering.
+  \item The vector store is an in-memory numpy array persisted with pickle:
+        no incremental merge on load, no ANN index (HNSW/IVF), no horizontal
+        scaling, no transactional safety.
+  \item No automated test suite or evaluation set; quality is assessed
+        manually via retrieval scores and answer inspection.
+  \item Single-process, single-user: no authentication, rate limiting,
+        multi-user separation, or locking on index writes.
+\end{itemize}
+
+% =================================================================
+\section{Future Work}
+\begin{enumerate}
+  \item Stress-test the prompt: verify the model says \emph{I don't know}
+        rather than hallucinating when the context lacks an answer.
+  \item Tune chunk size (e.g., 100 and 800) and observe changes in retrieval
+        scores and answer quality.
+  \item Add more documents and observe when 3-chunk retrieval stops finding
+        the right passage; that signals the need for hybrid search or a
+        reranker.
+  \item Replace the numpy store with Chroma once \code{index.pkl} feels
+        limiting; the interface is small enough to swap cleanly.
+  \item Build an evaluation set of 15--20 questions with known answers and
+        gate every change on pass/fail results.
+\end{itemize}
+
+% =================================================================
+\section{Conclusion}
+The project demonstrates a complete, transparent RAG pipeline in roughly a
+thousand lines of dependency-light Python. Every stage---chunking,
+embedding, retrieval, and generation---is inspectable and interchangeable,
+which makes it a strong starting point for understanding RAG fundamentals and
+for controlled experimentation before adopting heavier infrastructure.
+Both a browser UI and a CLI surface the same pipeline, and generation can be
+switched between Google Gemini and Amazon Bedrock at runtime without code
+changes.
+
+\end{document}
