@@ -3,3 +3,7 @@ index.pkl
 __pycache__/
 *.pyc
 .venv/
+<<<<<<< HEAD
+=======
+.idea
+>>>>>>> origin/main
