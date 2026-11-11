@@ -9,11 +9,6 @@ Usage:
 import os
 import sys
 
-<<<<<<< HEAD
-from rag.ingest import build_chunks
-from rag.store import VectorStore
-
-=======
 from dotenv import load_dotenv
 
 from rag.ingest import build_chunks
@@ -21,7 +16,6 @@ from rag.store import VectorStore
 
 load_dotenv()  # needed now: nested-table extraction may call Gemini for vision
 
->>>>>>> origin/main
 INDEX_PATH = os.environ.get("INDEX_PATH", "index.pkl")
 
 
@@ -30,13 +24,9 @@ def main():
 
     print(f"Loading and chunking documents from '{folder}'...")
     chunks = build_chunks(folder, chunk_size=300, overlap=50)
-<<<<<<< HEAD
-    print(f"Created {len(chunks)} chunks.")
-=======
     table_count = sum(1 for c in chunks if c.chunk_type == "table")
     text_count = len(chunks) - table_count
     print(f"Created {len(chunks)} chunks ({text_count} text, {table_count} table).")
->>>>>>> origin/main
 
     print("Embedding chunks (this downloads a small model on first run)...")
     store = VectorStore()

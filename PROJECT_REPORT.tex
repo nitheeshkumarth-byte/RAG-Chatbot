@@ -1,0 +1,1049 @@
+\documentclass[11pt,a4paper]{paper}
+
+% ---------- Packages ----------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{fancyvrb}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{longtable}
+\usepackage{multirow}
+\usepackage{graphicx}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage[lastpage]{zref}
+\setlist{topsep=2pt, itemsep=1pt, parsep=0pt}
+
+% ---------- Hyperlinks ----------
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  urlcolor=blue!60!black,
+  citecolor=blue!60!black,
+  pdftitle={Mini RAG — Comprehensive Project Documentation Report},
+  pdfauthor={Project Documentation},
+  pdfsubject={Retrieval-Augmented Generation Pipeline}
+}
+
+% ---------- Listings style ----------
+\definecolor{codebg}{RGB}{248,248,248}
+\definecolor{codekeyword}{RGB}{62,88,151}
+\definecolor{codecomment}{RGB}{96,140,98}
+\definecolor{codestring}{RGB}{163,23,23}
+\definecolor{mergeconflict}{RGB}{200,50,50}
+
+\lstdefinestyle{pythonstyle}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{codekeyword}\bfseries,
+  commentstyle=\color{codecomment}\itshape,
+  stringstyle=\color{codestring},
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{gray!40},
+  breaklines=true,
+  showstringspaces=false,
+  tabsize=4,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=6pt,
+  xleftmargin=14pt,
+  framexleftmargin=14pt,
+  captionpos=b
+}
+
+\lstdefinestyle{bashstyle}{
+  language=bash,
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{gray!40},
+  breaklines=true,
+  showstringspaces=false,
+  tabsize=2,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=6pt,
+  xleftmargin=14pt,
+  framexleftmargin=14pt,
+  captionpos=b
+}
+
+\lstdefinestyle{jsonstyle}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{codekeyword}\bfseries,
+  commentstyle=\color{codecomment}\itshape,
+  stringstyle=\color{codestring},
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{gray!40},
+  breaklines=true,
+  showstringspaces=false,
+  tabsize=2,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=6pt,
+  xleftmargin=14pt,
+  framexleftmargin=14pt,
+  captionpos=b
+}
+
+\lstset{style=pythonstyle}
+
+% ---------- Inline code ----------
+\newcommand{\code}[1]{\texttt{#1}}
+
+% ---------- Title ----------
+\title{\textbf{Mini RAG: Comprehensive Project Documentation Report}\\[6pt]
+\large A From-Scratch, No-Framework Retrieval-Augmented Generation Pipeline}
+
+\author{Project Documentation}
+\date{\today}
+
+% ---------- Headers / Footers ----------
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small Mini RAG — Project Report}
+\fancyhead[R]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\begin{document}
+
+\maketitle
+
+\begin{center}
+\textit{Keywords: Retrieval-Augmented Generation, Sentence Embeddings, Cosine Similarity, FastAPI, Google Gemini, Amazon Bedrock, Docker, AWS ECS, Vector Search}
+\end{center}
+
+\vspace{1em}
+
+\textbf{\large Document Status:} The codebase is currently in a \textcolor{mergeconflict}{\textbf{broken state}} due to unresolved git merge conflict markers across 7 files. These must be resolved before the project can run. See Section~\ref{sec:code-quality} for details.
+
+\newpage
+\tableofcontents
+\newpage
+
+% =================================================================
+\section{Executive Summary}
+\label{sec:exec-summary}
+
+\textbf{Mini RAG} is an educational-grade, production-aware Retrieval-Augmented Generation (RAG) pipeline implemented in approximately \textbf{1,000 lines} of dependency-light Python. It demonstrates the complete RAG loop — \emph{chunk $\rightarrow$ embed $\rightarrow$ store $\rightarrow$ retrieve $\rightarrow$ generate} — without relying on orchestration frameworks (LangChain, LlamaIndex) or dedicated vector database servers (Pinecone, Weaviate, Milvus).
+
+The project supports:
+
+\begin{itemize}
+  \item \textbf{Two deployment architectures:} a fully local pipeline (numpy + sentence-transformers) and a fully managed AWS pipeline (S3 + Bedrock Knowledge Bases + Titan embeddings + OpenSearch Serverless)
+  \item \textbf{Two LLM backends:} Google Gemini and Amazon Bedrock (Claude), switchable at runtime via a single environment variable
+  \item \textbf{Two interaction surfaces:} a browser-based UI (FastAPI + vanilla HTML/JS) and a command-line interface
+  \item \textbf{Multiple document formats:} PDF (text-layer), TXT, Markdown, and arbitrary web article URLs
+  \item \textbf{Advanced PDF handling:} table extraction via \texttt{pdfplumber} with vision-based fallback for nested tables using Gemini
+\end{itemize}
+
+The project's core principle is \textbf{transparency} — every stage of the pipeline is plain, readable Python so you can see exactly what ``RAG'' means before swapping in heavier libraries.
+
+% =================================================================
+\section{Project Overview}
+\label{sec:overview}
+
+\subsection{What It Does}
+
+\begin{enumerate}
+  \item \textbf{Ingests} documents in three formats (\texttt{.pdf}, \texttt{.txt}, \texttt{.md}) from a folder or browser upload, plus arbitrary blog-post URLs (article text extracted automatically via \texttt{trafilatura})
+  \item \textbfChunks} each document into overlapping, fixed-size word chunks (300 words for CLI, 500 words for API)
+  \item \textbf{Embeds} every chunk locally with \texttt{sentence-transformers} (\texttt{all-MiniLM-L6-v2}) — free, runs on your machine, no API key
+  \item \textbf{Stores} embeddings in plain numpy arrays persisted to \texttt{index.pkl} (no vector database server)
+  \item \textbf{Retrieves} the top-3 most similar chunks to a user's question using cosine similarity (implemented as a dot product on normalized vectors)
+  \item \textbf{Generates} a grounded answer from Gemini or Bedrock/Claude using a prompt that instructs the model to answer \emph{only from the retrieved context}
+\end{enumerate}
+
+\subsection{Design Philosophy}
+
+The project's core principle is \textbf{transparency}. Every stage of the pipeline is plain, readable Python so you can see exactly what ``RAG'' means before swapping in heavier libraries. This makes it ideal for:
+
+\begin{itemize}
+  \item Learning RAG fundamentals
+  \item Controlled experimentation (tune chunk size, swap models, test prompts)
+  \item Prototyping before committing to production infrastructure
+\end{itemize}
+
+% =================================================================
+\section{System Architecture}
+\label{sec:architecture}
+
+\subsection{High-Level Data Flow}
+
+Both the browser upload panel and the command-line entry points funnel into the same chunk $\rightarrow$ embed $\rightarrow$ store pipeline; ingestion is the only layer that is aware of file formats or URLs.
+
+\begin{figure}[h]
+\centering
+\begin{Verbatim}[frame=single, fontsize=\small, numbers=none]
+Browser upload / URL             your_docs/*.md  (CLI path)
+        |                              |
+        v                              v
+   POST /ingest/file |         build_chunks(folder)
+   POST /ingest/url  +----------------> rag/ingest.py
+                                              |  splits each source into
+                                              v  overlapping ~word chunks
+                                        rag/store.py
+                                              |  embeds each chunk with
+                                              |  all-MiniLM-L6-v2, keeps
+                                              |  vectors in numpy
+                                              v
+                           POST /query OR query.py
+                                              |  embeds your question, finds
+                                              |  the top-3 most similar chunks
+                                              |  (cosine similarity), stuffs
+                                              |  them into a prompt
+                                              v
+                                       rag/generate.py
+                                              |  generates a grounded answer
+                                              |  via Gemini or Bedrock
+                                              v
+                                           answer text
+\end{Verbatim}
+\caption{Pipeline data flow.}
+\label{fig:pipeline}
+\end{figure}
+
+\subsection{Two Deployment Architectures}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{>{\raggedright}p{3.5cm} >{\raggedright}p{5.5cm} >{\raggedright\arraybackslash}p{5.5cm}}
+\toprule
+\textbf{Aspect} & \textbf{Local Pipeline (\texttt{api.py})} & \textbf{Managed AWS Pipeline (\texttt{api\_kb.py})} \\
+\midrule
+Chunking & \texttt{rag/ingest.py} (word-based) & Bedrock Knowledge Base (automatic) \\
+Embedding & \texttt{all-MiniLM-L6-v2} (local, 384-dim) & Titan Text Embeddings V2 (managed) \\
+Vector Store & In-memory numpy array $\rightarrow$ \texttt{index.pkl} & OpenSearch Serverless (managed) \\
+Retrieval & Cosine similarity via dot product & Bedrock Retrieve API \\
+Generation & Gemini or Bedrock (via \texttt{rag/generate.py}) & Gemini or Bedrock (via \texttt{rag/generate.py}) \\
+File Storage & Local filesystem (\texttt{sample\_docs/}) & Amazon S3 \\
+Docker Image & Large ($\sim$2 GB with torch) & Small ($\sim$200 MB, no torch) \\
+Dependencies & \texttt{requirements.txt} (11 packages) & \texttt{requirements-kb.txt} (7 packages) \\
+\bottomrule
+\end{tabular}
+\caption{Comparison of local vs. managed AWS pipeline architectures.}
+\label{tab:arch-comparison}
+\end{table}
+
+% =================================================================
+\section{Technology Stack}
+\label{sec:tech-stack}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{>{\raggedright}p{3.2cm} >{\raggedright}p{4.2cm} >{\raggedright\arraybackslash}p{7.0cm}}
+\toprule
+\textbf{Concern} & \textbf{Technology} & \textbf{Notes} \\
+\midrule
+Language & Python $\geq$ 3.11 & Docker uses \texttt{python:3.11-slim}; workspace venv is CPython 3.12 \\
+Web server & FastAPI + uvicorn & REST API + static file serving \\
+Embeddings & sentence-transformers (\texttt{all-MiniLM-L6-v2}) & Local, no API key; 384-dim vectors \\
+Vector storage & numpy arrays & Persisted via \texttt{pickle} to \texttt{index.pkl} \\
+PDF text & pypdf & Text-layer extraction only, no OCR \\
+PDF tables & pdfplumber & Structured table extraction to Markdown \\
+Vision fallback & Gemini (google-genai) & Nested table transcription via page rendering \\
+URL extraction & trafilatura & Removes nav/ads/comments; returns (title, text) \\
+Generation & google-genai (Gemini) or boto3 (Bedrock) & Selected at runtime via env var \\
+Config & python-dotenv + AWS SSM Parameter Store & Dual-mode: local \texttt{.env} or cloud secrets \\
+Frontend & Vanilla HTML/CSS/JS & Single file, no build step, no framework \\
+Containerization & Docker & Two variants: local pipeline and KB pipeline \\
+Deployment & systemd (venv) or Docker on EC2 & Three documented paths \\
+\bottomrule
+\end{tabular}
+\caption{Technology stack.}
+\label{tab:stack}
+\end{table}
+
+\subsection{Dependencies}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{>{\ttfamily}l >{\ttfamily}l >{\raggedright\arraybackslash}p{7.5cm}}
+\toprule
+\textbf{Package} & \textbf{Version} & \textbf{Purpose} \\
+\midrule
+sentence-transformers & $\geq$2.7.0 & Local embeddings \\
+numpy & $\geq$1.26.0 & Vector storage + similarity search \\
+google-genai & $\geq$0.3.0 & Gemini LLM client \\
+python-dotenv & $\geq$1.0.0 & Load \texttt{.env} into environment \\
+fastapi & $\geq$0.115.0 & REST API framework \\
+uvicorn & $\geq$0.30.0 & ASGI server \\
+pypdf & $\geq$4.0.0 & PDF text extraction \\
+pdfplumber & $\geq$0.11.0 & PDF table extraction \\
+trafilatura & $\geq$1.12.0 & Web article extraction \\
+python-multipart & $\geq$0.0.9 & FastAPI file upload support \\
+boto3 & $\geq$1.34.0 & AWS Bedrock client (optional) \\
+\bottomrule
+\end{tabular}
+\caption{Python dependencies (local pipeline).}
+\label{tab:deps}
+\end{table}
+
+\textbf{\texttt{requirements-kb.txt}} (managed KB pipeline) omits \texttt{sentence-transformers}, \texttt{numpy}, \texttt{pypdf}, and \texttt{pdfplumber} — the Knowledge Base handles chunking/embedding/PDF-parsing during S3 sync. This keeps the Docker image much smaller and builds much faster.
+
+% =================================================================
+\section{Directory Structure}
+\label{sec:directory}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{>{\ttfamily}p{5.0cm} >{\raggedright\arraybackslash}p{9.5cm}}
+\toprule
+\textbf{File / Directory} & \textbf{Role} \\
+\midrule
+\texttt{api.py} & FastAPI server: HTTP endpoints + browser UI (local pipeline) \\
+\texttt{api\_kb.py} & FastAPI server: Bedrock Knowledge Bases pipeline (managed AWS) \\
+\texttt{build\_index.py} & CLI: chunk + embed + save a whole folder \\
+\texttt{query.py} & CLI: ask a question from the terminal \\
+\texttt{fetch\_url.py} & CLI: download a URL's article text to \texttt{sample\_docs/} \\
+\texttt{requirements.txt} & Python dependencies (local pipeline) \\
+\texttt{requirements-kb.txt} & Python dependencies (KB pipeline — lighter) \\
+\texttt{Dockerfile} & Container image (local pipeline) \\
+\texttt{Dockerfile.apprunner} & Container image (KB pipeline — no torch/numpy) \\
+\texttt{.env} & Runtime config (gitignored — never commit) \\
+\texttt{.gitignore} & Files git should ignore \\
+\texttt{.dockerignore} & Files excluded from Docker image \\
+\texttt{index.pkl} & Persisted vector index (pickle, gitignored) \\
+\texttt{README.md} & Main project documentation (838 lines) \\
+\texttt{project\_documentation.tex} & LaTeX technical documentation (679 lines) \\
+\texttt{DEPLOY\_AWS.md} & EC2 + venv + Gemini deployment guide \\
+\texttt{DEPLOY\_DOCKER\_BEDROCK.md} & EC2 + Docker + Bedrock deployment guide \\
+\texttt{DEPLOY\_APPRUNNER\_KB.md} & App Runner + Bedrock KB guide (deprecated) \\
+\texttt{DEPLOY\_ECS\_EXPRESS\_KB.md} & ECS Express Mode + Bedrock KB guide \\
+\texttt{rag/\_\_init\_\_.py} & Empty package marker \\
+\texttt{rag/config.py} & Config loader (env vars $\rightarrow$ AWS SSM Parameter Store) \\
+\texttt{rag/ingest.py} & Document loading, chunking, URL extraction, PDF tables \\
+\texttt{rag/store.py} & Embedding + cosine similarity search + persistence \\
+\texttt{rag/generate.py} & LLM generation (Gemini / Bedrock backends) \\
+\texttt{rag/kb\_client.py} & Bedrock Knowledge Base client (Retrieve API) \\
+\texttt{static/index.html} & Single-page frontend (vanilla HTML/CSS/JS, dark theme) \\
+\texttt{sample\_docs/} & Sample documents for CLI path \\
+\bottomrule
+\end{tabular}
+\caption{Repository layout.}
+\label{tab:repo}
+\end{table}
+
+% =================================================================
+\section{Pipeline in Detail}
+\label{sec:pipeline}
+
+\subsection{Stage 1: Ingestion (\texttt{rag/ingest.py})}
+
+The ingestion layer is the only part of the pipeline that knows about file formats or URLs. It produces a flat list of \texttt{Chunk} objects that the rest of the pipeline processes uniformly.
+
+\textbf{Key Functions:}
+
+\begin{longtable}{>{\ttfamily}l >{\raggedright\arraybackslash}p{10.5cm}}
+\toprule
+\textbf{Function} & \textbf{Description} \\
+\midrule
+\endhead
+\texttt{extract\_pdf\_text(path)} & Opens PDF with \texttt{pypdf.PdfReader}, joins every page's text with \texttt{\textbackslash n\textbackslash n}. Text-layer only — scanned PDFs yield empty strings. \\
+\texttt{extract\_tables\_from\_pdf(path, filename)} & Uses \texttt{pdfplumber} to detect tables, converts to Markdown. Falls back to Gemini vision for nested tables. \\
+\texttt{extract\_url\_text(url)} & Uses \texttt{trafilatura} to fetch and extract article text. Raises \texttt{ValueError} on failure. Returns \texttt{(title, text)}. \\
+\texttt{slugify(text, max\_len=60)} & Creates safe filename slugs from titles. \\
+\texttt{load\_documents(folder\_path)} & Loads \texttt{.md}, \texttt{.txt}, \texttt{.pdf} files from a folder (sorted by filename). \\
+\texttt{chunk\_text(text, chunk\_size=500, overlap=50)} & Word-based chunking with overlap. \\
+\texttt{chunk\_single\_document(filename, text, ...)} & Wrapps chunks into \texttt{Chunk} objects. \\
+\texttt{build\_chunks(folder\_path, ...)} & Loads all docs in a folder and flattens to chunk list. \\
+\bottomrule
+\end{longtable}
+\captionof{table}{Ingestion layer functions.}
+\label{tab:ingest-functions}
+
+\textbf{\texttt{Chunk} dataclass:}
+
+\begin{lstlisting}[language=Python, style=pythonstyle, caption={Chunk dataclass definition.}, label=lst:chunk]
+@dataclass
+class Chunk:
+    text: str           # The chunk's text content
+    source: str         # Filename the chunk came from
+    chunk_id: int       # Position of this chunk within its file (0-based)
+    chunk_type: str = "text"  # "text" or "table"
+\end{lstlisting}
+
+\textbf{PDF Table Extraction (origin/main branch):}
+
+The \texttt{origin/main} branch adds sophisticated PDF table handling:
+
+\begin{enumerate}
+  \item \textbf{Structured extraction:} \texttt{pdfplumber} detects tables and converts them to clean Markdown tables via \texttt{\_table\_rows\_to\_markdown()}
+  \item \textbf{Nested table detection:} \texttt{\_looks\_like\_nested\_table()} uses a heuristic (cells with $\geq$2 newlines) to detect tables that \texttt{pdfplumber} likely flattened
+  \item \textbf{Vision fallback:} For nested tables, the page is rendered as a PNG image and sent to Gemini with a prompt to transcribe the table structure
+  \item \textbf{Graceful degradation:} If vision transcription fails, falls back to flattened extraction with a warning
+\end{enumerate}
+
+\subsection{Stage 2: Embedding \& Storage (\texttt{rag/store.py})}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{>{\raggedright}p{4.0cm} >{\raggedright\arraybackslash}p{10.5cm}}
+\toprule
+\textbf{Component} & \textbf{Description} \\
+\midrule
+\texttt{EMBEDDING\_MODEL} & \texttt{"all-MiniLM-L6-v2"} — 384-dimensional, normalized vectors \\
+\texttt{VectorStore.\_\_init\_\_} & Loads SentenceTransformer model ($\sim$90 MB download on first run) \\
+\texttt{add(chunks)} & Encodes with \texttt{normalize\_embeddings=True}, appends to numpy matrix via \texttt{np.vstack} \\
+\texttt{search(query, top\_k=3)} & Cosine similarity via dot product (valid because vectors are normalized) \\
+\texttt{sources()} & Unique source filenames in insertion order (first-seen dedup) \\
+\texttt{remove\_source(source)} & Filters out chunks/embeddings for a given source \\
+\texttt{save(path)} / \texttt{load(path)} & Pickle persistence to/from \texttt{index.pkl} \\
+\bottomrule
+\end{tabular}
+\caption{Embedding and storage layer.}
+\label{tab:store}
+\end{table}
+
+\textbf{SearchResult dataclass:}
+
+\begin{lstlisting}[language=Python, style=pythonstyle, caption={SearchResult dataclass.}, label=lst:searchresult]
+@dataclass
+class SearchResult:
+    chunk: Chunk
+    score: float
+\end{lstlisting}
+
+\subsection{Stage 3: Generation (\texttt{rag/generate.py})}
+
+The generation step is swappable between Gemini and Bedrock at runtime via \texttt{GENERATION\_BACKEND}:
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{>{\raggedright}p{2.5cm} >{\raggedright}p{3.0cm} >{\raggedright}p{3.5cm} >{\raggedright\arraybackslash}p{5.5cm}}
+\toprule
+\textbf{Backend} & \textbf{Function} & \textbf{Requirements} & \textbf{API Call} \\
+\midrule
+Gemini & \texttt{\_generate\_gemini(prompt)} & \texttt{GEMINI\_API\_KEY} env var & \texttt{client.models.generate\_content(model, contents=prompt)} \\
+Bedrock & \texttt{\_generate\_bedrock(prompt)} & AWS credentials (IAM role or env vars) & \texttt{client.converse(modelId, messages, inferenceConfig)} \\
+\bottomrule
+\end{tabular}
+\caption{LLM generation backends.}
+\label{tab:backends}
+\end{table}
+
+Both \texttt{api.py} and \texttt{query.py} call \texttt{generate\_answer(prompt)} — neither knows which provider actually ran.
+
+\textbf{Bedrock specifics:}
+\begin{itemize}
+  \item Uses the \textbf{Converse API} (provider-agnostic, works for Claude/Nova/etc.)
+  \item \texttt{inferenceConfig=\{"maxTokens": 500\}}
+  \item No explicit AWS keys — \texttt{boto3} auto-discovers credentials from env vars, \texttt{$\sim$/.aws/credentials}, or EC2 IAM role
+\end{itemize}
+
+\subsection{Stage 4: Configuration (\texttt{rag/config.py})}
+
+A dual-mode config loader that enables the same code to run locally and on AWS:
+
+\begin{enumerate}
+  \item \textbf{Local path:} If the env var is set directly (e.g., \texttt{GEMINI\_API\_KEY=AIza...} in \texttt{.env}), use it as-is
+  \item \textbf{AWS path:} If \texttt{<VAR>\_PARAM} env var is set (e.g., \texttt{GEMINI\_API\_KEY\_PARAM=/rag-project/gemini-api-key}), fetch the real value from \textbf{AWS Systems Manager Parameter Store} (SecureString, decrypted)
+  \item \textbf{Caching:} \texttt{lru\_cache} ensures each parameter is fetched only once per process
+\end{enumerate}
+
+% =================================================================
+\section{Module Reference}
+\label{sec:modules}
+
+\subsection{\texttt{api.py} — FastAPI Server (Local Pipeline)}
+
+\textbf{Module-level setup:}
+\begin{itemize}
+  \item \texttt{load\_dotenv()} loads \texttt{.env} into \texttt{os.environ}
+  \item \texttt{INDEX\_PATH}, \texttt{DOCS\_FOLDER}, \texttt{TOP\_K = 3}, \texttt{ALLOWED\_EXTENSIONS}
+  \item \texttt{DOCS\_FOLDER} created with \texttt(os.makedirs(..., exist\_ok=True) at import
+  \item \texttt{/static} mounted for frontend serving
+  \item \texttt{VectorStore} created once at import time and loaded from \texttt{INDEX\_PATH}
+\end{itemize}
+
+\textbf{Helper functions:}
+\begin{itemize}
+  \item \texttt{build\_prompt(question, results)} — joins top results as \texttt{[Source: <source>]\textbackslash n<text>} blocks in a grounded-answer prompt
+  \item \texttt{\_add\_chunks\_to\_index(chunks)} — calls \texttt{store.add(chunks)} then \texttt{store.save(INDEX\_PATH)}
+\end{itemize}
+
+\textbf{Pydantic models:}
+
+\begin{lstlisting}[language=Python, style=pythonstyle, caption={Pydantic request/response models.}, label=lst:pydantic]
+class QueryRequest(BaseModel):
+    question: str
+
+class QueryResponse(BaseModel):
+    answer: str
+
+class UrlIngestRequest(BaseModel):
+    url: str
+
+class IngestResponse(BaseModel):
+    filename: str
+    chunks_added: int
+    total_chunks: int
+\end{lstlisting}
+
+\subsection{\texttt{api\_kb.py} — FastAPI Server (Managed KB Pipeline)}
+
+A sibling to \texttt{api.py} that swaps local ingestion/retrieval for managed AWS:
+\begin{itemize}
+  \item Uploads go to S3 via \texttt{boto3.client("s3")}
+  \item Bedrock Knowledge Base handles chunking/embedding/retrieval
+  \item Queries call \texttt{retrieve()} from \texttt{rag/kb\_client.py}
+  \item Generation unchanged — still uses \texttt{rag/generate.py}
+\end{itemize}
+
+\subsection{\texttt{build\_index.py} — CLI Index Builder}
+
+One-shot CLI that chunks a folder, embeds, and saves the index:
+\begin{itemize}
+  \item \texttt{python build\_index.py} $\rightarrow$ chunks \texttt{sample\_docs/}
+  \item \texttt{python build\_index.py my\_docs\_folder} $\rightarrow$ chunks your folder
+  \item Uses \texttt{chunk\_size=300, overlap=50}
+  \item \textbf{Rebuilds from scratch} — does not merge with existing index
+\end{itemize}
+
+\subsection{\texttt{query.py} — CLI Question Asker}
+
+Terminal Q\&A tool:
+\begin{itemize}
+  \item \texttt{python query.py "What is HNSW used for?"}
+  \item Loads store, retrieves top-3 chunks, prints scores, generates answer
+  \item Uses same \texttt{build\_prompt} shape as \texttt{api.py}
+\end{itemize}
+
+\subsection{\texttt{fetch\_url.py} — CLI URL Fetcher}
+
+Downloads article text for the CLI path:
+\begin{itemize}
+  \item \texttt{python fetch\_url.py https://example.com/some-blog-post}
+  \item Writes \texttt{\# \{title\}\textbackslash nSource: \{url\}\textbackslash n\textbackslash n\{text\}} to \texttt{sample\_docs/<slug>.txt}
+\end{itemize}
+
+\subsection{\texttt{rag/kb\_client.py} — Bedrock KB Client}
+
+Thin wrapper around Bedrock's Retrieve API:
+\begin{itemize}
+  \item \texttt{retrieve(question, top\_k=3)} — calls \texttt{bedrock-agent-runtime.retrieve()}
+  \item \texttt{start\_ingestion\_job()} — triggers on-demand S3 sync via \texttt{bedrock-agent.start\_ingestion\_job()}
+\end{itemize}
+
+\subsection{\texttt{static/index.html} — Single-Page Frontend}
+
+Dark ``notebook'' theme with CSS custom properties. Features:
+\begin{itemize}
+  \item Source panel with two tabs: Upload file (click/drag-drop) and Paste URL
+  \item Source list with Remove buttons
+  \item Question input + Ask button with pulsing ``Searching \& thinking'' indicator
+  \item All rendering HTML-escaped via \texttt{div.textContent} trick
+  \item \texttt{prefers-reduced-motion} media query support
+\end{itemize}
+
+% =================================================================
+\section{API Specification}
+\label{sec:api}
+
+\textbf{Base URL:} \texttt{http://localhost:8000} (or your deployed host)
+
+\subsection{\texttt{GET /}}
+
+Serves \texttt{static/index.html} (the single-page UI). All routes are served by FastAPI; the browser hits them directly.
+
+\subsection{\texttt{GET /sources}}
+
+Returns the distinct source filenames and total chunk count.
+
+\textbf{Response:}
+\begin{lstlisting}[language=Python, style=jsonstyle, caption={GET /sources response.}, label=lst:api-sources]
+{"sources": ["file1.pdf", "file2.md"], "total_chunks": 42}
+\end{lstlisting}
+
+Returns the deduplicated, insertion-ordered list of indexed filenames and the total number of chunks. Empty store yields empty list and zero.
+
+\subsection{\texttt{POST /ingest/file}}
+
+Multipart form field \texttt{file}. Accepts \texttt{.pdf}, \texttt{.txt}, \texttt{.md} only.
+
+\textbf{Error responses:}
+\begin{itemize}
+  \item \textbf{400} — \texttt{\{"detail": "Unsupported file type '.doc'. Use .pdf, .txt, or .md."\}}
+  \item \textbf{400} — \texttt{\{"detail": "No extractable text found in that file. If it's a scanned PDF, it needs OCR first."\}}
+\end{itemize}
+
+\textbf{Success response:}
+\begin{lstlisting}[language=Python, style=jsonstyle, caption={POST /ingest/file response.}, label=lst:api-ingest]
+{"filename": "doc.pdf", "chunks_added": 15, "total_chunks": 57}
+\end{lstlisting}
+
+\subsection{\texttt{POST /ingest/url}}
+
+JSON body: \texttt{\{"url": "https://..."\}}.
+
+\textbf{Error responses:}
+\begin{itemize}
+  \item \textbf{400} — \texttt{\{"detail": "Could not download https://..."\}} or \texttt{\{"detail": "Could not find readable article content at https://..."\}}
+\end{itemize}
+
+\textbf{Success response:} Same shape as file ingest.
+
+\subsection{\texttt{POST /query}}
+
+JSON body: \texttt{\{"question": "..."\}}.
+
+\textbf{Behavior:}
+\begin{itemize}
+  \item Empty store $\Rightarrow$ \textbf{200} with \texttt{\{"answer": "Nothing's been indexed yet — add a file or URL above first."\}}
+  \item Retrieves top-3 chunks, builds the grounded prompt, calls \texttt{generate\_answer}
+  \item Generation failure $\Rightarrow$ \textbf{200} with \texttt{\{"answer": "ERROR generating answer: \{e\}\text{"\}}
+  \item Success $\Rightarrow$ \textbf{200} with \texttt{\{"answer": "<generated text>"\}}
+\end{itemize}
+
+\subsection{\texttt{DELETE /sources/\{filename\}}}
+
+Removes one source and all its chunks/embeddings.
+
+\textbf{Success response:}
+\begin{lstlisting}[language=Python, style=jsonstyle, caption={DELETE /sources/\{filename\} response.}, label=lst:api-delete]
+{"removed": "doc.pdf", "total_chunks": 42}
+\end{lstlisting}
+
+\textbf{Error response:}
+\begin{itemize}
+  \item \textbf{404} — \texttt{\{"detail": "'doc.pdf' isn't currently indexed."\}}
+\end{itemize}
+
+% =================================================================
+\section{Configuration}
+\label{sec:config}
+
+\texttt{.env} is read by \texttt{load\_dotenv()} in both \texttt{api.py} and \texttt{query.py} and is gitignored. Every variable has a code-level default.
+
+\begin{longtable}{>{\ttfamily}p{3.5cm} >{\ttfamily}p{3.2cm} >{\raggedright\arraybackslash}p{7.8cm}}
+\toprule
+\textbf{Variable} & \textbf{Default} & \textbf{Meaning} \\
+\midrule
+\endhead
+INDEX\_PATH & index.pkl & Pickle file for the vector index \\
+DOCS\_FOLDER & sample\_docs & Where uploads and URL extractions are stored \\
+GENERATION\_BACKEND & gemini & \texttt{gemini} or \texttt{bedrock} \\
+GEMINI\_API\_KEY & (required) & Google AI Studio key for the Gemini backend \\
+GEMINI\_MODEL & gemini-2.5-flash & Gemini model name \\
+AWS\_REGION & us-east-1 & AWS region for Bedrock \\
+BEDROCK\_MODEL\_ID & anthropic.claude-3-5-haiku-... & Bedrock model identifier \\
+S3\_BUCKET\_NAME & — & S3 bucket for KB pipeline \\
+KNOWLEDGE\_BASE\_ID & — & Bedrock KB ID \\
+DATA\_SOURCE\_ID & — & Bedrock KB data source ID \\
+\bottomrule
+\end{longtable}
+\captionof{table}{Environment-variable configuration.}
+\label{tab:env}
+
+\textbf{Shipped \texttt{.env} values:}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{>{\ttfamily}p{5.0cm} >{\raggedright\arraybackslash}p{9.5cm}}
+\toprule
+\textbf{Variable} & \textbf{Value} \\
+\midrule
+GENERATION\_BACKEND & gemini \\
+GEMINI\_MODEL & gemini-2.5-flash \\
+AWS\_REGION & ap-south-2 \\
+BEDROCK\_MODEL\_ID & anthropic.claude-haiku-4-5-20251001-v1:0 \\
+\bottomrule
+\end{tabular}
+\caption{Variables actually set in the provided \texttt{.env}.}
+\label{tab:env-shipped}
+\end{table}
+
+\textbf{Heads-up:} several scripts and deployment guides reference a \texttt{.env.example} file that is \emph{not} present in the repository; a copy of \texttt{.env} or a manually created \texttt{.env.example} is needed before following the \texttt{cp .env.example .env} steps in the deployment documents.
+
+% =================================================================
+\section{Data \& Persistence}
+\label{sec:data}
+
+\begin{itemize}
+  \item \textbf{Index file (\texttt{index.pkl}):} a pickle of \texttt{\{"chunks": [Chunk, ...], "embeddings": ndarray\}}, saved after every API ingest/delete and by \texttt{build\_index.py}; loaded once at API startup. Gitignored and excluded from Docker images. Version-fragile pickle format — not suitable for multi-process or shared storage.
+  \item \textbf{Document folder (\texttt{DOCS\_FOLDER}, default \texttt{sample\_docs/}):} uploaded files are stored verbatim; URL ingests write \texttt{\# title / Source: url / text} files there. This folder is \emph{not} re-ingested automatically at startup — the index is self-contained.
+  \item \textbf{Memory:} chunks and embeddings live in RAM (numpy arrays) for the process lifetime. Large corpora will eat memory accordingly.
+  \item \textbf{Concurrency:} there is no locking around \texttt{store.add} / \texttt{store.save}; concurrent ingests could in principle race on the pickle write. Acceptable for single-user use.
+\end{itemize}
+
+% =================================================================
+\section{User Interfaces}
+\label{sec:ui}
+
+\subsection{Browser UI}
+
+Access at \texttt{http://localhost:8000}. Single-page app with:
+
+\begin{itemize}
+  \item \textbf{Source panel:} Two tabs (Upload file / Paste URL), status line, scrolling source list
+  \item \textbf{File upload:} Click-to-browse and drag-and-drop zone (accepts \texttt{.pdf}, \texttt{.txt}, \texttt{.md})
+  \item \textbf{URL input:} Text field with Enter key or Add button submission
+  \item \textbf{Question bar:} Input + Ask button with pulsing ``Searching \& thinking'' indicator
+  \item \textbf{Answer area:} Rendered with HTML escaping for safety
+  \item \textbf{Source management:} Remove buttons for each indexed source
+\end{itemize}
+
+\subsection{Command-Line Interface}
+
+\begin{lstlisting}[language=bash, style=bashstyle, caption={CLI commands.}, label=lst:cli]
+# Build index from a folder
+python build_index.py path/to/your/folder
+
+# Ask a question
+python query.py "your question"
+
+# Download an article for the CLI path
+python fetch_url.py https://example.com/some-post
+\end{lstlisting}
+
+% =================================================================
+\section{Docker \& Containerization}
+\label{sec:docker}
+
+\subsection{\texttt{Dockerfile} (Local Pipeline)}
+
+\begin{lstlisting}[language=bash, style=bashstyle, caption={Dockerfile (local pipeline).}, label=lst:dockerfile]
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+RUN mkdir -p sample_docs
+EXPOSE 8000
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
+\end{lstlisting}
+
+\textbf{Key design decisions:}
+\begin{itemize}
+  \item Dependencies installed first (separate cacheable layer for heavy torch/transformers)
+  \item \texttt{sample\_docs/} directory created in image
+  \item Binds to \texttt{0.0.0.0:8000} for external access
+\end{itemize}
+
+\subsection{\texttt{Dockerfile.apprunner} (KB Pipeline)}
+
+\begin{lstlisting}[language=bash, style=bashstyle, caption={Dockerfile.apprunner (KB pipeline).}, label=lst:dockerfile-apprunner]
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements-kb.txt .
+RUN pip install --no-cache-dir -r requirements-kb.txt
+COPY . .
+EXPOSE 8000
+CMD ["uvicorn", "api_kb:app", "--host", "0.0.0.0", "--port", "8000"]
+\end{lstlisting}
+
+\textbf{Key difference:} No \texttt{sentence-transformers}/\texttt{torch}/\texttt{numpy} — much smaller image, faster builds.
+
+\subsection{\texttt{.dockerignore}}
+
+Excludes: \texttt{.env}, \texttt{index.pkl}, \texttt{\_\_pycache\_\_/}, \texttt{*.pyc}, \texttt{.venv/}, \texttt{venv/}, \texttt{.git/}, \texttt{.gitignore}, \texttt{*.md}
+
+\subsection{Build \& Run}
+
+\begin{lstlisting}[language=bash, style=bashstyle, caption={Docker build and run.}, label=lst:docker-run]
+docker build -t rag-project .
+docker run -d --name rag-app --restart unless-stopped -p 8000:8000 \
+  --env-file .env -v "$(pwd)/data":/app/data rag-project
+\end{lstlisting}
+
+For persistence, \texttt{.env} must set:
+\begin{itemize}
+  \item \texttt{INDEX\_PATH=/app/data/index.pkl}
+  \item \texttt{DOCS\_FOLDER=/app/data/sample\_docs}
+\end{itemize}
+
+% =================================================================
+\section{Deployment Paths}
+\label{sec:deployment}
+
+\subsection{Path 1: EC2 + venv + Gemini (\texttt{DEPLOY\_AWS.md})}
+
+\begin{itemize}
+  \item \textbf{Simplest path:} One EC2 instance (Ubuntu 22.04, t3.small), plain Python venv
+  \item \textbf{Generation:} Google Gemini
+  \item \textbf{Process management:} systemd service (\texttt{rag.service})
+  \item \textbf{Cost:} $\sim$\$15/month (t3.small), $\sim$\$0.80/month (stopped, EBS only)
+  \item \textbf{Optional hardening:} Elastic IP, nginx reverse proxy, HTTPS via certbot, S3 for index
+\end{itemize}
+
+\subsection{Path 2: EC2 + Docker + Bedrock (\texttt{DEPLOY\_DOCKER\_BEDROCK.md})}
+
+\begin{itemize}
+  \item \textbf{Containerized:} Same EC2 instance, app runs in Docker
+  \item \textbf{Generation:} Amazon Bedrock (Claude) — no API key to manage
+  \item \textbf{Authentication:} IAM instance role (automatic credential forwarding)
+  \item \textbf{One-time setup:} Anthropic use-case submission (if required)
+\end{itemize}
+
+\subsection{Path 3: ECS Express Mode + Bedrock KB (\texttt{DEPLOY\_ECS\_EXPRESS\_KB.md})}
+
+\begin{itemize}
+  \item \textbf{Fully managed:} ECS Express Mode + Bedrock Knowledge Bases
+  \item \textbf{Storage:} S3 + Titan embeddings + OpenSearch Serverless
+  \item \textbf{No server management:} Auto-provisioned ALB, auto-scaling, CloudWatch logs
+  \item \textbf{Most expensive:} OpenSearch Serverless minimum capacity billing
+  \item \textbf{Note:} Replaces deprecated App Runner path (closed to new customers April 30, 2026)
+\end{itemize}
+
+\subsection{Deprecated: App Runner + Bedrock KB (\texttt{DEPLOY\_APPRUNNER\_KB.md})}
+
+\begin{itemize}
+  \item \textbf{Status:} Deprecated — App Runner closed to new customers on April 30, 2026
+  \item \textbf{Replacement:} ECS Express Mode (Path 3 above)
+\end{itemize}
+
+% =================================================================
+\section{Security \& Privacy}
+\label{sec:security}
+
+\subsection{Secrets Management}
+
+\begin{itemize}
+  \item \texttt{.env} and \texttt{index.pkl} are \textbf{gitignored} and \textbf{\texttt{.dockerignore}d} — never commit or bake into images
+  \item AWS deployment uses IAM roles — no secrets in \texttt{.env} or code
+  \item \texttt{rag/config.py} supports AWS SSM Parameter Store for cloud deployments
+\end{itemize}
+
+\subsection{API Key Concern}
+
+\begin{itemize}
+  \item The shipped \texttt{GEMINI\_API\_KEY} value does not match the standard \texttt{AIza...} format
+  \item May be invalid or from a different provider
+  \item \textbf{Recommendation:} Grab a fresh key from Google AI Studio and update \texttt{.env}
+\end{itemize}
+
+\subsection{Error Leakage}
+
+\begin{itemize}
+  \item Generation errors are returned to the browser as the answer body (\texttt{ERROR generating answer: ...})
+  \item This can leak internal details (stack traces, provider error messages)
+  \item \textbf{Recommendation:} Log server-side and return a generic message before public deployment
+\end{itemize}
+
+\subsection{Privacy}
+
+\begin{itemize}
+  \item \texttt{sample\_docs/New Text Document.txt} contains personal/private content about a third party
+  \item Included in any \texttt{build\_index.py} run over the default folder
+  \item \textbf{Recommendation:} Remove it (and any index built from it) before sharing or deploying
+\end{itemize}
+
+\subsection{No Authentication}
+
+\begin{itemize}
+  \item The API has no authentication, rate limiting, or multi-user separation
+  \item Suitable for local/single-user use only
+\end{itemize}
+
+% =================================================================
+\section{Known Limitations}
+\label{sec:limitations}
+
+\begin{longtable}{>{\raggedright}p{3.5cm} >{\raggedright}p{5.0cm} >{\raggedright\arraybackslash}p{6.0cm}}
+\toprule
+\textbf{Limitation} & \textbf{Impact} & \textbf{Mitigation} \\
+\midrule
+\endhead
+No OCR & Scanned/image PDFs yield no text & Add \texttt{pytesseract} preprocessing \\
+Fixed-size word chunking & No structure-aware or semantic chunking & Implement heading-aware or sentence-boundary chunking \\
+Top-3 retrieval only & No hybrid search, no reranker, no metadata filtering & Add BM25 + vector hybrid, cross-encoder reranker \\
+In-memory numpy store & No ANN index, no horizontal scaling, no transactional safety & Migrate to Chroma/Qdrant/pgvector at scale \\
+No automated tests & Quality assessed manually & Build eval set with 15-20 questions \\
+Single-process, single-user & No auth, no rate limiting, no locking & Add middleware for production use \\
+Pickle format & Version-fragile, not multi-process safe & Migrate to a proper vector DB \\
+Chunk size inconsistency & CLI uses 300 words, API uses 500 words & Standardize or make configurable \\
+Duplicated code & \texttt{build\_prompt()} and \texttt{TOP\_K} duplicated between \texttt{api.py} and \texttt{query.py} & Extract to shared module \\
+\bottomrule
+\end{longtable}
+\captionof{table}{Known limitations with impact and mitigation.}
+\label{tab:limitations}
+
+% =================================================================
+\section{Code Quality Issues}
+\label{sec:code-quality}
+
+\subsection{Critical: Unresolved Git Merge Conflict Markers}
+
+\textbf{This is the most significant finding.} Multiple files contain unresolved merge conflict markers (\texttt{<<<<<<< HEAD}, \texttt{=======}, \texttt{>>>>>>> origin/main}):
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{>{\raggedright}p{5.0cm} >{\raggedright\arraybackslash}p{9.5cm}}
+\toprule
+\textbf{File} & \textbf{Conflict Locations} \\
+\midrule
+\texttt{README.md} & Lines 1, 444, 452, 458, 699, 787, 793, 827, 838 \\
+\texttt{requirements.txt} & Lines 8-11 \\
+\texttt{api.py} & Lines 20-24, 138-144 \\
+\texttt{build\_index.py} & Lines 12-24, 33-39 \\
+\texttt{rag/ingest.py} & Lines 14-19, 24-34, 44-55, 61-211, 222-233, 285-303 \\
+\texttt{rag/generate.py} & Lines 30-42, 53-57 \\
+\texttt{.gitignore} & Lines 6-9 \\
+\bottomrule
+\end{tabular}
+\caption{Files with unresolved merge conflict markers.}
+\label{tab:conflicts}
+\end{table}
+
+These conflicts are between \texttt{HEAD} (local changes) and \texttt{origin/main} (remote changes). The \texttt{origin/main} branch adds features like PDF table extraction (\texttt{pdfplumber}), vision-based nested table transcription, AWS SSM Parameter Store config, and the \texttt{api\_kb.py} managed pipeline.
+
+\textbf{The project cannot run in its current state.} These conflicts must be resolved by:
+\begin{enumerate}
+  \item Deciding which version of each conflicting section to keep (or merging both)
+  \item Removing all \texttt{<<<<<<< HEAD}, \texttt{=======}, and \texttt{>>>>>>> origin/main} markers
+  \item Verifying the resolved code is syntactically valid
+\end{enumerate}
+
+\subsection{Other Issues}
+
+\begin{itemize}
+  \item \textbf{No \texttt{.env.example}} exists despite being referenced by \texttt{query.py} docstring and both deployment guides
+  \item \textbf{Duplicated code:} \texttt{build\_prompt()} and \texttt{TOP\_K = 3} are duplicated between \texttt{api.py} and \texttt{query.py}
+  \item \textbf{Chunk size inconsistency:} CLI uses 300 words, API uses 500 words (module default)
+  \item \textbf{No CI/CD configuration:} No automated build, test, or deployment pipeline
+  \item \textbf{No automated tests:} No test suite or evaluation set
+\end{itemize}
+
+% =================================================================
+\section{Suggested Next Steps}
+\label{sec:next-steps}
+
+\subsection{Immediate (Fix the Code)}
+
+\begin{enumerate}
+  \item \textbf{Resolve merge conflicts} across all 7 affected files
+  \item \textbf{Create \texttt{.env.example}} with placeholder values
+  \item \textbf{Standardize chunk size} between CLI and API paths (or make it configurable)
+  \item \textbf{Extract shared code} (\texttt{build\_prompt}, \texttt{TOP\_K}) into a common module
+\end{enumerate}
+
+\subsection{Short-Term (Improve Quality)}
+
+\begin{enumerate}
+  \item \textbf(Build an eval set:} Write 15-20 questions with known answers from your docs
+  \item \textbf{Add automated tests:} Unit tests for chunking, embedding, and retrieval
+  \item \textbf{Add CI/CD:} GitHub Actions for linting, testing, and Docker builds
+  \item \textbf{Fix the API key:} Replace with a valid Google AI Studio key
+\end{enumerate}
+
+\subsection{Medium-Term (Enhance Capabilities)}
+
+\begin{enumerate}
+  \item \textbf{Add hybrid search:} Combine BM25 keyword search with vector similarity
+  \item \textbf{Add a reranker:} Cross-encoder model to re-rank retrieved chunks
+  \item \textbf{Implement structure-aware chunking:} Split on headings/paragraphs instead of fixed word count
+  \item \textbf{Add OCR support:} \texttt{pytesseract} for scanned PDFs
+  \item \textbf{Swap vector store:} Migrate from numpy/pickle to Chroma or Qdrant
+\end{enumerate}
+
+\subsection{Long-Term (Production Hardening)}
+
+\begin{enumerate}
+  \item \textbf{Add authentication:} API keys or OAuth for multi-user support
+  \item \textbf{Add rate limiting:} Prevent abuse
+  \item \textbf{Add monitoring:} Structured logging, metrics, alerting
+  \item \textbf{Horizontal scaling:} Load balancer + shared vector store
+\end{enumerate}
+
+% =================================================================
+\section{Troubleshooting}
+\label{sec:troubleshooting}
+
+\begin{longtable}{>{\raggedright}p{4.5cm} >{\raggedright}p{4.0cm} >{\raggedright\arraybackslash}p{6.0cm}}
+\toprule
+\textbf{Symptom} & \textbf{Likely Cause} & \textbf{Fix} \\
+\midrule
+\endhead
+\texttt{GEMINI\_API\_KEY is not set} & Missing/misnamed env var & Add \texttt{GEMINI\_API\_KEY=AIza...} to \texttt{.env} and restart \\
+\texttt{ERROR generating answer: ...} & Backend config issue & Check \texttt{GENERATION\_BACKEND} and provider error text \\
+PDF adds but few/no words & Scanned PDF (no text layer) & Add OCR preprocessing \\
+\texttt{Unsupported file type} & Wrong file extension & Use \texttt{.pdf}, \texttt{.txt}, or \texttt{.md} \\
+\texttt{Nothing's been indexed yet} & Empty store & Add a source first \\
+First run downloads slowly & Model download from HF & Wait for \texttt{all-MiniLM-L6-v2} ($\sim$90 MB) \\
+Port 8000 refused externally & Security group not open & Open Custom TCP 8000 in EC2 security group \\
+CLI says empty index & Wrong \texttt{INDEX\_PATH} & Confirm same directory/path for both commands \\
+\texttt{AccessDeniedException} & IAM role missing/misconfigured & Attach \texttt{AmazonBedrockFullAccess} to instance role \\
+\texttt{ValidationException: model ID invalid} & Wrong model ID format & Use cross-region inference profile ID \\
+\texttt{ParameterNotFound} (SSM) & Wrong parameter path & Confirm exact path in Parameter Store \\
+\bottomrule
+\end{longtable}
+\captionof{table}{Troubleshooting guide.}
+\label{tab:troubleshooting}
+
+% =================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+\textbf{Mini RAG} is a well-architected, educational RAG pipeline that demonstrates the complete chunk $\rightarrow$ embed $\rightarrow$ retrieve $\rightarrow$ generate loop in approximately 1,000 lines of dependency-light Python. Its key strengths are:
+
+\begin{itemize}
+  \item \textbf{Transparency:} Every stage is plain, readable Python — no black boxes
+  \item \textbf{Flexibility:} Two LLM backends, two deployment architectures, two interaction surfaces
+  \item \textbf{Progressive complexity:} Start local with numpy, migrate to managed AWS when ready
+  \item \textbf{Comprehensive documentation:} 838-line README, 679-line LaTeX doc, 4 deployment guides
+\end{itemize}
+
+The codebase currently has \textbf{critical unresolved merge conflicts} that must be addressed before it can run. Once resolved, the project provides a solid foundation for learning RAG fundamentals, controlled experimentation, and gradual production hardening.
+
+The suggested evolution path is:
+\begin{enumerate}
+  \item Fix merge conflicts $\rightarrow$ 2. Add tests and eval set $\rightarrow$ 3. Tune chunk size and prompt $\rightarrow$ 4. Add hybrid search and reranker $\rightarrow$ 5. Migrate to a proper vector database $\rightarrow$ 6. Production hardening (auth, monitoring, scaling)
+\end{enumerate}
+
+% =================================================================
+\appendix
+
+\section{Git History}
+
+The project has a single \texttt{main} branch with \texttt{origin/main} and \texttt{origin/master} remotes. The merge conflicts suggest a problematic merge was committed without resolution.
+
+\section{Sample Documents}
+
+\texttt{sample\_docs/} ships three files for the CLI path:
+\begin{itemize}
+  \item \texttt{vector\_databases.md} — explains vector DBs, why they matter for RAG, and ANN indexing (HNSW/IVF)
+  \item \texttt{chunking\_strategies.md} — fixed-size vs structure-aware vs semantic chunking, with trade-offs
+  \item \texttt{New Text Document.txt} — a personal note in your workspace (privacy concern — see Section~\ref{sec:security})
+\end{itemize}
+
+\section{File Inventory}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{l rr}
+\toprule
+\textbf{Category} & \textbf{Count} & \textbf{Total Lines (approx.)} \\
+\midrule
+Python source files & 10 & $\sim$1,200 \\
+Markdown documentation & 6 & $\sim$2,100 \\
+LaTeX documentation & 1 & 679 \\
+Dockerfiles & 2 & 35 \\
+Configuration files & 3 & 40 \\
+HTML/JS/CSS & 1 & 493 \\
+\bottomrule
+\textbf{Total} & \textbf{23} & \textbf{$\sim$4,547} \\
+\bottomrule
+\end{tabular}
+\caption{File inventory.}
+\label{tab:file-inventory}
+\end{table}
+
+\end{document}

@@ -27,11 +27,6 @@ def generate_answer(prompt: str) -> str:
 def _generate_gemini(prompt: str) -> str:
     from google import genai
 
-<<<<<<< HEAD
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is not set in .env")
-=======
     from rag.config import get_config
 
     # get_config checks GEMINI_API_KEY directly first (the .env/local path);
@@ -39,7 +34,6 @@ def _generate_gemini(prompt: str) -> str:
     # from AWS Parameter Store (the App Runner path). Nothing here changes
     # for anyone still just using a plain .env file.
     api_key = get_config("GEMINI_API_KEY", param_name_env="GEMINI_API_KEY_PARAM")
->>>>>>> origin/main
 
     model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
     client = genai.Client(api_key=api_key)
@@ -50,11 +44,7 @@ def _generate_gemini(prompt: str) -> str:
 def _generate_bedrock(prompt: str) -> str:
     import boto3
 
-<<<<<<< HEAD
-    region = os.environ.get("AWS_REGION", "us-east-1")
-=======
     region = os.environ.get("AWS_REGION", "ap-south-2")
->>>>>>> origin/main
     model_id = os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-3-5-haiku-20241022-v1:0")
 
     # No explicit AWS keys here on purpose: boto3 automatically picks up

@@ -11,27 +11,16 @@ import re
 from dataclasses import dataclass
 from typing import List, Tuple
 
-<<<<<<< HEAD
-import trafilatura
-from pypdf import PdfReader
-
-=======
->>>>>>> origin/main
 
 @dataclass
 class Chunk:
     text: str
-<<<<<<< HEAD
-    source: str      # which file this chunk came from
-    chunk_id: int     # position of this chunk within the file
-=======
     source: str          # which file this chunk came from
     chunk_id: int         # position of this chunk within the file
     chunk_type: str = "text"  # "text" or "table" — tables are kept whole,
                               # never split by chunk_text(), since breaking
                               # a table mid-row destroys the row/column
                               # relationships that make it useful at all
->>>>>>> origin/main
 
 
 def extract_pdf_text(path: str) -> str:
@@ -41,9 +30,6 @@ def extract_pdf_text(path: str) -> str:
     OCR first (e.g. pytesseract) — extract_text() will return empty strings
     for those pages instead of raising an error, so a PDF that yields
     suspiciously little text is worth checking by eye.
-<<<<<<< HEAD
-    """
-=======
 
     pypdf is imported here rather than at module level, so that importing
     this file (e.g. for slugify()/extract_url_text() in api_kb.py, which
@@ -51,15 +37,11 @@ def extract_pdf_text(path: str) -> str:
     sync) doesn't require pypdf to be installed at all.
     """
     from pypdf import PdfReader
-
->>>>>>> origin/main
     reader = PdfReader(path)
     pages = [page.extract_text() or "" for page in reader.pages]
     return "\n\n".join(pages)
 
 
-<<<<<<< HEAD
-=======
 def _looks_like_nested_table(rows: List[List[str]]) -> bool:
     """Heuristic for 'pdfplumber probably flattened a nested table into one
     cell's raw text instead of detecting the inner grid'. pdfplumber finds
@@ -208,7 +190,6 @@ def extract_tables_from_pdf(path: str, filename: str) -> List["Chunk"]:
     return table_chunks
 
 
->>>>>>> origin/main
 def slugify(text: str, max_len: int = 60) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
     return slug[:max_len] or "page"
@@ -219,9 +200,6 @@ def extract_url_text(url: str) -> Tuple[str, str]:
 
     Returns (title, text). Raises ValueError if the page can't be fetched or
     no readable article content could be found in it.
-<<<<<<< HEAD
-    """
-=======
 
     trafilatura is imported here rather than at module level, same reasoning
     as the pypdf/pdfplumber imports elsewhere in this file: code that only
@@ -229,8 +207,6 @@ def extract_url_text(url: str) -> Tuple[str, str]:
     to be installed too.
     """
     import trafilatura
-
->>>>>>> origin/main
     downloaded = trafilatura.fetch_url(url)
     if not downloaded:
         raise ValueError(f"Could not download {url}")
@@ -282,12 +258,6 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]
 
 
 def build_chunks(folder_path: str, chunk_size: int = 500, overlap: int = 50) -> List[Chunk]:
-<<<<<<< HEAD
-    """Load every document in a folder and turn it into a flat list of Chunk objects."""
-    all_chunks = []
-    for filename, text in load_documents(folder_path):
-        all_chunks.extend(chunk_single_document(filename, text, chunk_size, overlap))
-=======
     """Load every document in a folder and turn it into a flat list of Chunk
     objects — prose chunks from chunk_single_document(), plus one extra
     Chunk per table found in any PDF (tables are extracted separately since
@@ -299,8 +269,6 @@ def build_chunks(folder_path: str, chunk_size: int = 500, overlap: int = 50) -> 
         if filename.endswith(".pdf"):
             path = os.path.join(folder_path, filename)
             all_chunks.extend(extract_tables_from_pdf(path, filename))
-
->>>>>>> origin/main
     return all_chunks
 
 
