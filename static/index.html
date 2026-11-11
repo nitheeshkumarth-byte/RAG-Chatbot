@@ -381,8 +381,13 @@
       formData.append('file', file);
       try {
         const res = await fetch('/ingest/file', { method: 'POST', body: formData });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || `Server returned ${res.status}`);
+        let data;
+        try {
+          data = await res.json();
+        } catch {
+          throw new Error(`The server returned an invalid response (HTTP ${res.status}). Check server logs.`);
+        }
+        if (!res.ok) throw new Error(data.detail || `File ingestion failed (HTTP ${res.status}).`);
         setStatus(`Added ${data.filename} (${data.chunks_added} chunks)`, 'success');
         fileInput.value = '';
         loadSources();
@@ -399,8 +404,13 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ url })
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || `Server returned ${res.status}`);
+        let data;
+        try {
+          data = await res.json();
+        } catch {
+          throw new Error(`The server returned an invalid response (HTTP ${res.status}). Check server logs.`);
+        }
+        if (!res.ok) throw new Error(data.detail || `URL ingestion failed (HTTP ${res.status}).`);
         setStatus(`Added ${data.filename} (${data.chunks_added} chunks)`, 'success');
         urlInput.value = '';
         loadSources();
@@ -466,9 +476,15 @@
           body: JSON.stringify({ question })
         });
 
-        if (!res.ok) throw new Error(`Server returned ${res.status}`);
+        let data;
+        try {
+          data = await res.json();
+        } catch {
+          throw new Error(`The server returned an invalid response (HTTP ${res.status}). Is the server running?`);
+        }
 
-        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || `Server returned ${res.status}`);
+
         wrap.innerHTML = `
           <div class="state-label">Answer</div>
           <div class="answer">${escapeHtml(data.answer)}</div>

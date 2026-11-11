@@ -6,10 +6,13 @@ exactly what's happening. Swap this out later for smarter, structure-aware
 chunking once you understand the basics.
 """
 
+import logging
 import os
 import re
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import Any, List, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -37,41 +40,96 @@ def extract_pdf_text(path: str) -> str:
     sync) doesn't require pypdf to be installed at all.
     """
     from pypdf import PdfReader
-    reader = PdfReader(path)
-    pages = [page.extract_text() or "" for page in reader.pages]
+
+    try:
+        reader = PdfReader(path)
+    except Exception as e:
+        logger.error(f"Failed to open PDF at {path}: {e}")
+        raise ValueError(f"Could not read PDF file: {e}") from e
+
+    pages = []
+    for page_idx, page in enumerate(reader.pages):
+        try:
+            pages.append(page.extract_text() or "")
+        except Exception as e:
+            logger.warning(f"Failed to extract text from page {page_idx + 1} of {path}: {e}")
+            pages.append("")
+
     return "\n\n".join(pages)
 
 
-def _looks_like_nested_table(rows: List[List[str]]) -> bool:
+def _looks_like_nested_table(rows: List[List[Any]]) -> bool:
     """Heuristic for 'pdfplumber probably flattened a nested table into one
     cell's raw text instead of detecting the inner grid'. pdfplumber finds
     tables by looking for a regular grid of lines/whitespace; a table nested
     inside another cell usually doesn't form its own detectable grid, so it
     shows up as a single cell containing several newline-separated lines
     that are themselves a smaller table pdfplumber never noticed."""
+    if not rows or not isinstance(rows, (list, tuple)):
+        return False
     for row in rows:
+        if not isinstance(row, (list, tuple)):
+            continue
         for cell in row:
-            if cell and cell.count("\n") >= 2:
+            if cell is not None and isinstance(cell, str) and cell.count("\n") >= 2:
                 return True
     return False
 
 
-def _table_rows_to_markdown(rows: List[List[str]]) -> str:
+def _table_rows_to_markdown(rows: List[List[Any]]) -> str:
     """Serialize a pdfplumber table (list of rows of cell strings) into a
     Markdown table. This preserves row/column relationships in a form both
     embeddable and human-readable — plain flattened text loses that
-    structure entirely (a $ figure ends up with no indication of which row
-    or column it belonged to)."""
-    if not rows:
+    structure entirely.
+
+    Defensively handles malformed tables, missing cells, empty rows, and
+    unexpected cell data types.
+    """
+    if not rows or not isinstance(rows, (list, tuple)):
         return ""
-    cleaned = [[(cell or "").replace("\n", " ").strip() for cell in row] for row in rows]
-    header, *body = cleaned
+
+    cleaned_rows: List[List[str]] = []
+    for row in rows:
+        if row is None:
+            continue
+        if not isinstance(row, (list, tuple)):
+            row = [row]
+
+        cleaned_row = []
+        for cell in row:
+            if cell is None:
+                cleaned_row.append("")
+            else:
+                cleaned_row.append(str(cell).replace("\n", " ").strip())
+
+        # Discard rows where every cell is completely empty
+        if any(cleaned_row):
+            cleaned_rows.append(cleaned_row)
+
+    if not cleaned_rows:
+        return ""
+
+    # Normalize all rows to have the same number of columns (max columns found)
+    max_cols = max(len(row) for row in cleaned_rows)
+    if max_cols == 0:
+        return ""
+
+    normalized_rows = [row + [""] * (max_cols - len(row)) for row in cleaned_rows]
+
+    # If every cell in every row is empty, there's nothing useful to emit
+    if not any(cell for row in normalized_rows for cell in row):
+        return ""
+
+    header = normalized_rows[0]
+    body = normalized_rows[1:]
+
     lines = [
         "| " + " | ".join(header) + " |",
-        "| " + " | ".join(["---"] * len(header)) + " |",
+        "| " + " | ".join(["---"] * max_cols) + " |",
     ]
     for row in body:
         lines.append("| " + " | ".join(row) + " |")
+
     return "\n".join(lines)
 
 
@@ -86,6 +144,8 @@ def _describe_table_with_vision(image_bytes: bytes) -> str:
     the Bedrock path in rag/generate.py isn't wired for image input yet,
     and vision-request shape differs enough between providers that it
     isn't worth abstracting until a second provider is actually needed.
+
+    Guaranteed to return a string (empty string on failure or empty response).
     """
     import base64
 
@@ -93,100 +153,150 @@ def _describe_table_with_vision(image_bytes: bytes) -> str:
 
     from rag.config import get_config
 
-    api_key = get_config("GEMINI_API_KEY", param_name_env="GEMINI_API_KEY_PARAM")
+    try:
+        api_key = get_config("GEMINI_API_KEY", param_name_env="GEMINI_API_KEY_PARAM")
+    except Exception as e:
+        logger.warning(f"Could not retrieve GEMINI_API_KEY for vision transcription: {e}")
+        return ""
+
     model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-    client = genai.Client(api_key=api_key)
 
-    response = client.models.generate_content(
-        model=model,
-        contents=[
-            {
-                "inline_data": {
-                    "mime_type": "image/png",
-                    "data": base64.b64encode(image_bytes).decode(),
-                }
-            },
-            "Transcribe every table on this page into Markdown tables. If a "
-            "table cell contains another table nested inside it, represent "
-            "the nested table as its own separate Markdown table directly "
-            "below the outer one, with a one-line heading noting which "
-            "outer row/column it belongs to. Output only the Markdown "
-            "tables and their headings — no other commentary.",
-        ],
-    )
-    return response.text
+    try:
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model=model,
+            contents=[
+                {
+                    "inline_data": {
+                        "mime_type": "image/png",
+                        "data": base64.b64encode(image_bytes).decode(),
+                    }
+                },
+                "Transcribe every table on this page into Markdown tables. If a "
+                "table cell contains another table nested inside it, represent "
+                "the nested table as its own separate Markdown table directly "
+                "below the outer one, with a one-line heading noting which "
+                "outer row/column it belongs to. Output only the Markdown "
+                "tables and their headings — no other commentary.",
+            ],
+        )
+        if response and hasattr(response, "text") and response.text:
+            return response.text.strip()
+        logger.warning("Gemini Vision response returned empty or None text.")
+        return ""
+    except Exception as e:
+        logger.warning(f"Gemini Vision call failed: {e}")
+        return ""
 
 
-def extract_tables_from_pdf(path: str, filename: str) -> List["Chunk"]:
+def extract_tables_from_pdf(path: str, filename: str) -> List[Chunk]:
     """Find every table in a PDF and return each as its own Chunk.
 
     Tries fast structured extraction (pdfplumber) first. Falls back to a
     vision model, page by page, only for tables that look nested — regular
     flat tables never pay the extra cost of an LLM call.
 
-    pdfplumber and its vision-fallback imports are both local to this
-    function for the same reason extract_pdf_text() keeps pypdf local:
-    api_kb.py imports this module for slugify()/extract_url_text() and
-    never calls this function, so it shouldn't need these packages
-    installed at all.
+    Handles rendering errors, vision failures, malformed tables, and ensures
+    individual table failures do not crash document ingestion.
     """
     import pdfplumber
 
+    logger.info(f"Starting table extraction for {filename}")
     table_chunks: List[Chunk] = []
     table_counter = 0
 
-    with pdfplumber.open(path) as pdf:
+    try:
+        pdf = pdfplumber.open(path)
+    except Exception as e:
+        logger.error(f"Failed to open PDF for table extraction {path}: {e}")
+        return []
+
+    with pdf:
         for page_num, page in enumerate(pdf.pages, start=1):
-            tables = page.extract_tables()
+            try:
+                tables = page.extract_tables()
+            except Exception as e:
+                logger.warning(f"Error extracting tables on page {page_num} of {filename}: {e}")
+                continue
+
             if not tables:
                 continue
 
             page_image_bytes = None  # lazily rendered only if a nested table is found
 
-            for rows in tables:
-                if not rows or not rows[0]:
+            for table_idx, rows in enumerate(tables, start=1):
+                if not rows or not isinstance(rows, (list, tuple)):
                     continue
 
-                if _looks_like_nested_table(rows):
-                    if page_image_bytes is None:
-                        from io import BytesIO
+                markdown = ""
+                is_nested = _looks_like_nested_table(rows)
 
-                        pil_image = page.to_image(resolution=200).original
-                        buf = BytesIO()
-                        pil_image.save(buf, format="PNG")
-                        page_image_bytes = buf.getvalue()
+                if is_nested:
+                    logger.info(
+                        f"Detected nested table {table_idx} on page {page_num} of {filename}. Attempting Vision extraction."
+                    )
                     try:
-                        markdown = _describe_table_with_vision(page_image_bytes)
-                    except Exception as e:
-                        # Don't let one table's vision call kill the whole
-                        # indexing run — fall back to the flattened table
-                        # instead. It'll misrepresent the nested structure,
-                        # but you still get a chunk instead of losing
-                        # everything else that was about to be indexed.
-                        print(
-                            f"  Warning: vision transcription failed for a nested "
-                            f"table on page {page_num} of {filename} ({e}). "
-                            f"Falling back to flattened extraction for this table."
-                        )
-                        markdown = _table_rows_to_markdown(rows)
-                else:
-                    markdown = _table_rows_to_markdown(rows)
+                        if page_image_bytes is None:
+                            from io import BytesIO
 
-                if not markdown.strip():
+                            pil_image = page.to_image(resolution=200).original
+                            buf = BytesIO()
+                            pil_image.save(buf, format="PNG")
+                            page_image_bytes = buf.getvalue()
+
+                        markdown = _describe_table_with_vision(page_image_bytes) or ""
+                    except Exception as e:
+                        logger.warning(
+                            f"Vision transcription failed for nested table {table_idx} on page {page_num} of {filename}: {e}"
+                        )
+                        markdown = ""
+
+                    # If vision extraction failed or returned empty content, fall back to structured extraction
+                    if not isinstance(markdown, str) or not markdown.strip():
+                        logger.info(
+                            f"Vision extraction returned empty content for table {table_idx} on page {page_num} of {filename}. "
+                            "Falling back to structured table extraction."
+                        )
+                        try:
+                            markdown = _table_rows_to_markdown(rows) or ""
+                        except Exception as e:
+                            logger.warning(
+                                f"Structured fallback extraction failed for table {table_idx} on page {page_num} of {filename}: {e}"
+                            )
+                            markdown = ""
+                else:
+                    try:
+                        markdown = _table_rows_to_markdown(rows) or ""
+                    except Exception as e:
+                        logger.warning(
+                            f"Structured extraction failed for table {table_idx} on page {page_num} of {filename}: {e}"
+                        )
+                        markdown = ""
+
+                # If both extraction methods fail or return empty content, skip this table
+                if not isinstance(markdown, str) or not markdown.strip():
+                    logger.warning(
+                        f"Skipping table {table_idx} on page {page_num} of {filename} because extraction returned empty content."
+                    )
                     continue
 
-                header = [(c or "").strip() for c in rows[0]]
-                context_line = f"Table from page {page_num} of {filename}, columns: {', '.join(header)}"
+                # Safely construct context line
+                first_row = rows[0] if (rows and isinstance(rows[0], (list, tuple))) else []
+                header_cols = [str(c).strip() for c in first_row if c is not None and str(c).strip()]
+                columns_label = ", ".join(header_cols) if header_cols else "unnamed"
+                context_line = f"Table from page {page_num} of {filename}, columns: {columns_label}"
+
                 table_counter += 1
                 table_chunks.append(
                     Chunk(
-                        text=f"{context_line}\n\n{markdown}",
+                        text=f"{context_line}\n\n{markdown.strip()}",
                         source=filename,
                         chunk_id=table_counter,
                         chunk_type="table",
                     )
                 )
 
+    logger.info(f"Completed table extraction for {filename}: {len(table_chunks)} tables extracted")
     return table_chunks
 
 
@@ -221,15 +331,27 @@ def extract_url_text(url: str) -> Tuple[str, str]:
 
 
 def load_documents(folder_path: str) -> List[tuple[str, str]]:
-    """Load all .md, .txt, and .pdf files from a folder. Returns [(filename, text), ...]."""
+    """Load all .md, .txt, and .pdf files from a folder. Returns [(filename, text), ...].
+
+    Files that fail to load are logged and skipped rather than aborting the whole batch.
+    """
     docs = []
     for filename in sorted(os.listdir(folder_path)):
         path = os.path.join(folder_path, filename)
         if filename.endswith((".md", ".txt")):
-            with open(path, "r", encoding="utf-8") as f:
-                docs.append((filename, f.read()))
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    docs.append((filename, f.read()))
+                logger.info(f"Loaded text file: {filename}")
+            except Exception as e:
+                logger.warning(f"Failed to read {filename}: {e}")
         elif filename.endswith(".pdf"):
-            docs.append((filename, extract_pdf_text(path)))
+            try:
+                text = extract_pdf_text(path)
+                docs.append((filename, text))
+                logger.info(f"Extracted text from PDF: {filename}")
+            except Exception as e:
+                logger.warning(f"Failed to extract text from PDF {filename}: {e}")
     return docs
 
 
@@ -268,7 +390,11 @@ def build_chunks(folder_path: str, chunk_size: int = 500, overlap: int = 50) -> 
 
         if filename.endswith(".pdf"):
             path = os.path.join(folder_path, filename)
-            all_chunks.extend(extract_tables_from_pdf(path, filename))
+            try:
+                table_chunks = extract_tables_from_pdf(path, filename)
+                all_chunks.extend(table_chunks)
+            except Exception as e:
+                logger.warning(f"Table extraction failed for {filename}: {e}")
     return all_chunks
 
 
