@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RAG pipeline lab</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<style>
+  :root {
+    --ink: #eae6da;
+    --ink-dim: #a9a495;
+    --paper: #14181f;
+    --paper-raised: #1b202b;
+    --rule: #2a3040;
+    --accent: #c9a15c;
+    --accent-dim: #7d6a45;
+    --bad: #d98c6c;
+    --serif: Charter, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    --mono: "SF Mono", "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--serif);
+    padding: 5vh 24px 8vh;
+  }
+
+  main { max-width: 1440px; margin: 0 auto; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent-dim);
+    margin-bottom: 10px;
+  }
+
+  h1 { font-size: 32px; font-weight: 500; margin: 0 0 8px; }
+  h2 { font-size: 18px; font-weight: 500; margin: 0 0 14px; }
+
+  .sub { color: var(--ink-dim); font-size: 15px; margin: 0 0 8px; line-height: 1.5; }
+
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .panel {
+    background: var(--paper-raised);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 22px;
+  }
+
+  .field { margin-bottom: 16px; }
+  .field:last-child { margin-bottom: 0; }
+
+  .label {
+    display: block;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    margin-bottom: 6px;
+  }
+
+  input[type="text"], input[type="number"], select, textarea {
+    background: transparent;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 14px;
+    padding: 8px 10px;
+    outline: none;
+    width: 100%;
+  }
+
+  input[type="text"] { font-size: 16px; }
+  input:focus, select:focus { border-color: var(--accent-dim); }
+  select option { background: var(--paper-raised); color: var(--ink); }
+
+  .checks { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+
+  .upload-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+
+  input[type="file"] {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-dim);
+    max-width: 100%;
+  }
+
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 14px;
+    color: var(--ink);
+    cursor: pointer;
+  }
+
+  .check input { accent-color: var(--accent); }
+
+  .inline { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+
+  button {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--accent-dim);
+    border-radius: 5px;
+    padding: 8px 16px;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+
+  button:hover:not(:disabled) { background: var(--accent); color: var(--paper); }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.plain { border-color: var(--rule); color: var(--ink-dim); padding: 4px 9px; font-size: 11px; }
+
+  .run-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+
+  .config {
+    border-top: 1px solid var(--rule);
+    margin-top: 16px;
+    padding-top: 14px;
+  }
+
+  .config-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+
+  .config-title {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+  }
+
+  .fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+    gap: 10px;
+  }
+
+  .fields .label { margin-bottom: 4px; }
+
+  .status {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-dim);
+    min-height: 18px;
+    margin: 14px 0;
+  }
+
+  .status.error { color: var(--bad); }
+  .status.busy { color: var(--accent); }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(430px, 1fr));
+    gap: 18px;
+    align-items: start;
+  }
+
+  .card {
+    background: var(--paper-raised);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 18px;
+    min-width: 0;
+  }
+
+  .card.error { border-color: var(--bad); }
+
+  .card-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+
+  .tag {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .summary {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-dim);
+    text-align: right;
+    line-height: 1.5;
+  }
+
+  .answer {
+    font-size: 15px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    border-left: 2px solid var(--accent-dim);
+    padding-left: 12px;
+    margin: 12px 0 16px;
+  }
+
+  .dim { color: var(--ink-dim); font-family: var(--mono); font-size: 12px; }
+
+  .stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-dim);
+    margin-bottom: 12px;
+  }
+
+  .stats b { color: var(--ink); font-weight: 500; }
+
+  .chunkmap {
+    display: flex;
+    gap: 1px;
+    height: 26px;
+    margin-bottom: 6px;
+    cursor: pointer;
+  }
+
+  .seg {
+    flex-grow: 1;
+    min-width: 2px;
+    background: #2f3748;
+    border-radius: 1px;
+    transition: background 0.12s ease;
+  }
+
+  .seg.hit { background: var(--accent); }
+  .seg:hover { background: var(--ink-dim); }
+  .seg.hit:hover { background: #e0bd7e; }
+
+  .map-legend {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--ink-dim);
+    margin-bottom: 10px;
+  }
+
+  .peek {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-dim);
+    white-space: pre-wrap;
+    max-height: 90px;
+    overflow: auto;
+    margin: 0 0 10px;
+    padding: 8px;
+    border: 1px solid var(--rule);
+    border-radius: 5px;
+    display: none;
+  }
+
+  details {
+    border-top: 1px solid var(--rule);
+    padding: 8px 0;
+  }
+
+  details:last-of-type { border-bottom: 1px solid var(--rule); }
+
+  summary {
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1.5;
+    list-style: none;
+  }
+
+  summary::-webkit-details-marker { display: none; }
+  summary:hover { color: var(--accent); }
+
+  .chunk-meta {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--ink-dim);
+    margin-right: 8px;
+    white-space: nowrap;
+  }
+
+  .chunk-text {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--ink-dim);
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 8px 0 4px;
+  }
+
+  .score { color: var(--accent); }
+
+  .scatter {
+    display: block;
+    width: 100%;
+    height: 132px;
+    margin: 14px 0 4px;
+    background: rgba(0, 0, 0, 0.12);
+    border-radius: 5px;
+  }
+
+  .section-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-dim);
+    margin: 14px 0 6px;
+  }
+
+  .metrics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-dim);
+    margin-top: 12px;
+  }
+
+  .metrics b { color: var(--ink); font-weight: 500; }
+
+  .history { display: flex; align-items: center; gap: 10px; }
+  .history select { max-width: 420px; }
+
+  .empty { font-family: var(--mono); font-size: 12px; color: var(--ink-dim); }
+
+  @media (max-width: 700px) {
+    .grid { grid-template-columns: 1fr; }
+    body { padding: 24px 14px 50px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">RAG experimentation</div>
+  <h1>Pipeline lab</h1>
+  <p class="sub">Upload once, run the same question through several configurations, and see every stage: chunks, retrieval scores, reranking, prompt and answer. <a href="/">Back to the chatbot</a></p>
+
+  <div class="panel">
+    <div class="field">
+      <span class="label">Documents</span>
+      <div class="checks" id="doc-list"><span class="empty">Loading…</span></div>
+      <div class="upload-row">
+        <input type="file" id="lab-file" accept=".pdf,.txt,.md">
+        <button type="button" class="plain" id="lab-upload">Upload</button>
+      </div>
+      <div class="map-legend">Uploads also add the file to the chatbot index.</div>
+    </div>
+
+    <div class="field">
+      <span class="label">Question</span>
+      <select id="eval-select" style="margin-bottom:8px"><option value="">Load a labelled question… (optional)</option></select>
+      <input type="text" id="question" placeholder="e.g. What is the difference between fixed and semantic chunking?" autocomplete="off">
+    </div>
+
+    <div class="field">
+      <span class="label">Expected keywords (optional — used to score retrieval / answers)</span>
+      <input type="text" id="keywords" placeholder="chunking, overlap, embeddings" autocomplete="off">
+      <div class="map-legend" id="eval-note" style="margin-top:6px">Known-answer snippets (precision@k / recall@k): none loaded.</div>
+    </div>
+
+    <div class="field">
+      <span class="label">Configs</span>
+      <div id="configs"></div>
+      <div style="margin-top:12px"><button type="button" class="plain" id="add-config" disabled>+ Add config</button></div>
+    </div>
+
+    <div class="run-row">
+      <label class="inline"><input type="checkbox" id="generate" checked> Generate answers with the LLM</label>
+      <button type="button" id="run-btn" disabled>Run experiment</button>
+    </div>
+  </div>
+
+  <div class="status" id="status"></div>
+  <div class="grid" id="results"></div>
+
+  <div class="panel" style="margin-top:22px">
+    <div class="history">
+      <span class="label" style="margin:0">History</span>
+      <select id="history"><option value="">Load a previous run…</option></select>
+      <button type="button" class="plain" id="history-delete" disabled>Delete</button>
+    </div>
+  </div>
+</main>
+
+<script>
+  const DEFAULTS = [
+    {
+      chunking: { strategy: "fixed", size: 500, overlap: 50, threshold: 0.75, parent_size: 0, contextual: 0 },
+      embedding: { model: "all-MiniLM-L6-v2" },
+      retrieval: { strategy: "vector", top_k: 4, alpha: 0.5, lambda: 0.7, chunk_type: "any", multi_query: 0 },
+      rerank: null
+    },
+    {
+      chunking: { strategy: "recursive", size: 400, overlap: 60, threshold: 0.75, parent_size: 0, contextual: 0 },
+      embedding: { model: "BAAI/bge-small-en-v1.5" },
+      retrieval: { strategy: "hybrid", top_k: 4, alpha: 0.5, lambda: 0.7, chunk_type: "any", multi_query: 0 },
+      rerank: { model: "cross-encoder/ms-marco-MiniLM-L-6-v2", top_n: 3 }
+    }
+  ];
+
+  const state = { options: null, count: 0, snippets: [] };
+  const docList = document.getElementById("doc-list");
+  const configsEl = document.getElementById("configs");
+  const statusEl = document.getElementById("status");
+  const resultsEl = document.getElementById("results");
+  const historyEl = document.getElementById("history");
+  const runBtn = document.getElementById("run-btn");
+  const deleteBtn = document.getElementById("history-delete");
+  const evalSelect = document.getElementById("eval-select");
+  const evalNote = document.getElementById("eval-note");
+
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = String(str);
+    return div.innerHTML;
+  }
+
+  function escapeAttr(str) {
+    return String(str)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
+  function setStatus(message, kind) {
+    statusEl.textContent = message;
+    statusEl.className = "status" + (kind ? ` ${kind}` : "");
+  }
+
+  function optionsHtml(list, current) {
+    return list.map(item => {
+      const value = typeof item === "string" ? item : item.id;
+      const label = typeof item === "string" ? item : item.label;
+      return `<option value="${escapeAttr(value)}"${value === current ? " selected" : ""}>${escapeHtml(label)}</option>`;
+    }).join("");
+  }
+
+  function configHtml(index, config) {
+    const ch = config.chunking, em = config.embedding, rt = config.retrieval;
+    const rr = config.rerank || {};
+    return `
+      <div class="config" data-index="${index}">
+        <div class="config-head">
+          <span class="config-title">Config ${index + 1}</span>
+          <button type="button" class="plain remove-config">Remove</button>
+        </div>
+        <div class="fields">
+          <label><span class="label">Chunking</span>
+            <select data-k="chunking.strategy">${optionsHtml(state.options.chunking_strategies, ch.strategy)}</select></label>
+          <label><span class="label">Chunk size (words)</span>
+            <input type="number" data-k="chunking.size" min="20" max="2000" value="${ch.size}"></label>
+          <label><span class="label">Overlap (words)</span>
+            <input type="number" data-k="chunking.overlap" min="0" max="1999" value="${ch.overlap}"></label>
+          <label><span class="label">Semantic threshold</span>
+            <input type="number" data-k="chunking.threshold" min="0" max="1" step="0.05" value="${ch.threshold ?? 0.75}"></label>
+          <label><span class="label">Parent size (0 = off)</span>
+            <input type="number" data-k="chunking.parent_size" min="0" max="4000" value="${ch.parent_size || 0}"></label>
+          <label><span class="label">Contextual chunks (0/1)</span>
+            <input type="number" data-k="chunking.contextual" min="0" max="1" value="${ch.contextual ? 1 : 0}"></label>
+          <label><span class="label">Embedding model</span>
+            <select data-k="embedding.model">${optionsHtml(state.options.embedding_models, em.model)}</select></label>
+          <label><span class="label">Retrieval</span>
+            <select data-k="retrieval.strategy">${optionsHtml(state.options.retrieval_strategies, rt.strategy)}</select></label>
+          <label><span class="label">Top K</span>
+            <input type="number" data-k="retrieval.top_k" min="1" max="20" value="${rt.top_k}"></label>
+          <label><span class="label">Chunk type</span>
+            <select data-k="retrieval.chunk_type">
+              <option value="any"${rt.chunk_type === "any" ? " selected" : ""}>any</option>
+              <option value="text"${rt.chunk_type === "text" ? " selected" : ""}>text only</option>
+              <option value="table"${rt.chunk_type === "table" ? " selected" : ""}>tables only</option>
+            </select></label>
+          <label><span class="label">Hybrid alpha</span>
+            <input type="number" data-k="retrieval.alpha" min="0" max="1" step="0.1" value="${rt.alpha}"></label>
+          <label><span class="label">MMR lambda</span>
+            <input type="number" data-k="retrieval.lambda" min="0" max="1" step="0.1" value="${rt.lambda}"></label>
+          <label><span class="label">Multi-query rewrites (0 = off)</span>
+            <input type="number" data-k="retrieval.multi_query" min="0" max="5" value="${rt.multi_query || 0}"></label>
+          <label><span class="label">Reranker</span>
+            <select data-k="rerank.model"><option value="">None</option>${optionsHtml(state.options.rerank_models, rr.model || "")}</select></label>
+          <label><span class="label">Rerank top N</span>
+            <input type="number" data-k="rerank.top_n" min="1" max="20" value="${rr.top_n || 3}"></label>
+        </div>
+      </div>`;
+  }
+
+  function addConfig(config) {
+    if (state.count >= 6) return;
+    configsEl.insertAdjacentHTML("beforeend", configHtml(state.count, config));
+    state.count += 1;
+    syncRemoveButtons();
+  }
+
+  function syncRemoveButtons() {
+    const rows = configsEl.querySelectorAll(".config");
+    rows.forEach(row => {
+      row.querySelector(".remove-config").disabled = rows.length === 1;
+    });
+  }
+
+  function readConfig(row) {
+    const config = { chunking: {}, embedding: {}, retrieval: {}, rerank: null };
+    row.querySelectorAll("[data-k]").forEach(input => {
+      const [group, key] = input.dataset.k.split(".");
+      let value = input.type === "number" ? Number(input.value) : input.value;
+      if (group === "rerank") {
+        if (!config.rerank) config.rerank = { model: "", top_n: 3 };
+        config.rerank[key] = value;
+      } else {
+        config[group][key] = value;
+      }
+    });
+    if (config.rerank && !config.rerank.model) config.rerank = null;
+    return config;
+  }
+
+  function selectedDocs() {
+    return Array.from(docList.querySelectorAll("input:checked")).map(i => i.value);
+  }
+
+  function renderDocuments(selected) {
+    const docs = state.options.documents;
+    if (!docs.length) {
+      docList.innerHTML = '<span class="empty">No .pdf, .txt or .md files in sample_docs/. Upload one above.</span>';
+      return;
+    }
+    docList.innerHTML = docs.map(doc => `
+      <label class="check">
+        <input type="checkbox" value="${escapeAttr(doc.name)}"${selected.includes(doc.name) ? " checked" : ""}>
+        ${escapeHtml(doc.name)}
+      </label>`).join("");
+  }
+
+  async function fetchOptions() {
+    const res = await fetch("/experiments/options");
+    if (!res.ok) throw new Error(`Server returned ${res.status}`);
+    state.options = await res.json();
+    return state.options;
+  }
+
+  async function loadOptions() {
+    try {
+      const options = await fetchOptions();
+      renderDocuments(options.documents.length ? [options.documents[0].name] : []);
+      document.getElementById("add-config").disabled = false;
+      runBtn.disabled = false;
+      DEFAULTS.forEach(addConfig);
+      loadEvalQuestions();
+      loadHistory();
+    } catch (err) {
+      docList.innerHTML = `<span class="empty">Could not load options: ${escapeHtml(err.message)}</span>`;
+      setStatus("Is the server running?", "error");
+    }
+  }
+
+  async function refreshDocuments(selected) {
+    try {
+      await fetchOptions();
+      const names = state.options.documents.map(d => d.name);
+      renderDocuments(selected.filter(n => names.includes(n)));
+    } catch (err) {
+      setStatus(`Could not refresh documents: ${err.message}`, "error");
+    }
+  }
+
+  async function loadEvalQuestions() {
+    try {
+      const res = await fetch("/experiments/eval");
+      const data = await res.json();
+      state.evalQuestions = data.questions || [];
+      if (!state.evalQuestions.length) return;
+      evalSelect.innerHTML = '<option value="">Load a labelled question… (optional)</option>' +
+        state.evalQuestions.map((q, i) => `<option value="${i}">${escapeHtml(q.question)}</option>`).join("");
+    } catch { /* an eval set is optional */ }
+  }
+
+  function updateSnippetNote() {
+    evalNote.textContent = state.snippets.length
+      ? `Known-answer snippets (precision@k / recall@k): ${state.snippets.join(" | ")}`
+      : "Known-answer snippets (precision@k / recall@k): none loaded.";
+  }
+
+  async function uploadFile() {
+    const file = document.getElementById("lab-file").files[0];
+    if (!file) return setStatus("Choose a file first.", "error");
+
+    setStatus(`Uploading and indexing ${file.name}…`, "busy");
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const res = await fetch("/ingest/file", { method: "POST", body: formData });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `Upload failed (HTTP ${res.status}).`);
+
+      await refreshDocuments([...selectedDocs(), data.filename]);
+      document.getElementById("lab-file").value = "";
+      setStatus(`Added ${data.filename} (${data.chunks_added} chunks).`, "");
+    } catch (err) {
+      setStatus(err.message, "error");
+    }
+  }
+
+  async function runExperiment() {
+    const question = document.getElementById("question").value.trim();
+    const docs = selectedDocs();
+    const configs = Array.from(configsEl.querySelectorAll(".config")).map(readConfig);
+    const keywords = document.getElementById("keywords").value
+      .split(",").map(k => k.trim()).filter(Boolean);
+    const generate = document.getElementById("generate").checked;
+
+    if (!question) return setStatus("Enter a question first.", "error");
+    if (!docs.length) return setStatus("Select at least one document.", "error");
+
+    runBtn.disabled = true;
+    setStatus("Running — first use of a model downloads it, which can take a while…", "busy");
+    resultsEl.innerHTML = "";
+
+    try {
+      const res = await fetch("/experiments/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question, docs, configs, generate,
+          expected_keywords: keywords,
+          expected_snippets: state.snippets
+        })
+      });
+      let data;
+      try { data = await res.json(); }
+      catch { throw new Error(`The server returned an invalid response (HTTP ${res.status}).`); }
+      if (!res.ok) throw new Error(data.detail || `Experiment failed (HTTP ${res.status}).`);
+
+      renderRecord(data);
+      setStatus(`Run ${data.id} finished.`, "");
+      loadHistory();
+    } catch (err) {
+      setStatus(err.message, "error");
+    } finally {
+      runBtn.disabled = false;
+    }
+  }
+
+  function configLabel(config) {
+    const c = config || {};
+    const ch = c.chunking || {};
+    const rt = c.retrieval || {};
+    const em = (c.embedding || {}).model || "?";
+    const rerank = c.rerank ? " + rerank" : "";
+    const parent = ch.parent_size ? ` → parent ${ch.parent_size}` : "";
+    const contextual = ch.contextual ? " · contextual" : "";
+    const filter = rt.chunk_type && rt.chunk_type !== "any" ? ` · ${rt.chunk_type} only` : "";
+    const multiquery = rt.multi_query ? ` · ${rt.multi_query} rewrites` : "";
+    return `${ch.strategy || "?"} ${ch.size || "?"}/${ch.overlap || 0}${parent}${contextual} · ${em.split("/").pop()} · ${rt.strategy || "?"}${filter}${multiquery}${rerank}`;
+  }
+
+  function renderRecord(record) {
+    state.lastRecord = record;
+    resultsEl.innerHTML = record.results.map((result, index) => renderResult(result, index)).join("");
+  }
+
+  function renderResult(result, index) {
+    const config = result.config || {};
+    const head = `
+      <div class="card-head">
+        <span class="tag">Config ${index + 1}</span>
+        <span class="summary">${escapeHtml(configLabel(config))}</span>
+      </div>`;
+
+    if (result.error) {
+      return `<article class="card error">${head}
+        <div class="answer"><span class="dim">Error:</span> ${escapeHtml(result.error)}</div>
+      </article>`;
+    }
+
+    const chunks = result.chunks || [];
+    const retrieved = result.retrieved || [];
+    const hitIds = new Set(retrieved.map(r => r.id));
+    const avgWords = chunks.length
+      ? Math.round(chunks.reduce((sum, c) => sum + c.words, 0) / chunks.length)
+      : 0;
+    const latency = result.latency_ms || {};
+    const metrics = result.metrics || {};
+
+    const chunkMap = chunks.map(c => `
+      <div class="seg${hitIds.has(c.id) ? " hit" : ""}"
+           style="flex-grow:${Math.max(c.words, 1)}"
+           data-id="${c.id}"
+           title="Chunk ${c.id} • ${c.words} words"></div>`).join("");
+
+    const retrievedHtml = retrieved.map(item => `
+      <details>
+        <summary>
+          <span class="chunk-meta">#${item.id} ${escapeHtml(item.source)} · ${item.words}w · ${escapeHtml(item.chunk_type)}</span>
+          <span class="score">${scoreLine(item)}</span>
+        </summary>
+        <pre class="chunk-text">${escapeHtml(item.text)}</pre>
+        ${item.parent_text ? `<div class="section-label">Parent sent to the prompt</div>
+        <pre class="chunk-text">${escapeHtml(item.parent_text)}</pre>` : ""}
+      </details>`).join("") || '<div class="empty">No chunks retrieved.</div>';
+
+    const scatter = renderScatter(result.projection || [], hitIds);
+
+    return `<article class="card" data-result-index="${index}">
+      ${head}
+      <div class="answer">${result.answer ? escapeHtml(result.answer) : '<span class="dim">Answer generation was off.</span>'}</div>
+      <div class="stats">
+        <span><b>${chunks.length}</b> chunks</span>
+        <span><b>${avgWords}</b> avg words</span>
+        <span><b>${latency.total_ms ?? "?"}</b> ms total</span>
+        <span><b>${latency.embed_ms ?? "?"}</b> ms embed</span>
+        <span><b>${(latency.retrieve_ms || 0) + (latency.rerank_ms || 0)}</b> ms retrieve</span>
+        ${latency.rewrite_ms ? `<span><b>${latency.rewrite_ms}</b> ms rewrite</span>` : ""}
+        <span><b>${latency.generate_ms ?? 0}</b> ms generate</span>
+      </div>
+
+      <div class="section-label">Chunk map</div>
+      <div class="chunkmap">${chunkMap}</div>
+      <div class="map-legend">each bar = one chunk, width = word count · gold = retrieved · click for text</div>
+      <pre class="peek"></pre>
+
+      <div class="section-label">Retrieved chunks</div>
+      ${retrievedHtml}
+
+      ${scatter}
+
+      <div class="metrics">
+        <span>context <b>${metrics.context_words ?? "?"}</b> words</span>
+        <span>retrieval hit rate <b>${fmtRate(metrics.retrieval_keyword_hit_rate)}</b></span>
+        <span>precision@k <b>${fmtRate(metrics.retrieval_precision_at_k)}</b></span>
+        <span>recall@k <b>${fmtRate(metrics.retrieval_recall_at_k)}</b></span>
+        <span>answer hit rate <b>${fmtRate(metrics.answer_keyword_hit_rate)}</b></span>
+        <span>answer grounding <b>${fmtRate(metrics.answer_grounding)}</b></span>
+      </div>
+
+      <details>
+        <summary><span class="chunk-meta">Prompt sent to the model</span></summary>
+        <pre class="chunk-text">${escapeHtml(result.prompt || "")}</pre>
+      </details>
+      ${(result.rewrites || []).length ? `<div class="section-label">Query rewrites</div>
+      <pre class="chunk-text">${escapeHtml(result.rewrites.join("\n"))}</pre>` : ""}
+    </article>`;
+  }
+
+  function scoreLine(item) {
+    const parts = [];
+    if (item.vector_score !== null && item.vector_score !== undefined) parts.push(`vec ${item.vector_score}`);
+    if (item.bm25_score !== null && item.bm25_score !== undefined) parts.push(`bm25 ${item.bm25_score}`);
+    if (item.rank_score !== null && item.rank_score !== undefined) parts.push(`rank ${item.rank_score}`);
+    if (item.rerank_score !== null && item.rerank_score !== undefined) parts.push(`rerank ${item.rerank_score}`);
+    return parts.join(" · ");
+  }
+
+  function fmtRate(value) {
+    return value === null || value === undefined ? "—" : `${Math.round(value * 100)}%`;
+  }
+
+  function renderScatter(projection, hitIds) {
+    if (!projection.length) {
+      return '<div class="section-label">Embedding projection</div><div class="empty">Not shown for runs above 800 chunks.</div>';
+    }
+    const W = 280, H = 132, PAD = 10;
+    const xs = projection.map(p => p[0]);
+    const ys = projection.map(p => p[1]);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const spanX = maxX - minX || 1;
+    const spanY = maxY - minY || 1;
+    const points = projection.map(([x, y], id) => {
+      const cx = PAD + ((x - minX) / spanX) * (W - PAD * 2);
+      const cy = H - PAD - ((y - minY) / spanY) * (H - PAD * 2);
+      const hit = hitIds.has(id);
+      return `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${hit ? 3.6 : 1.8}"
+        fill="${hit ? "#c9a15c" : "#56617a"}"><title>Chunk ${id}</title></circle>`;
+    }).join("");
+    return `<div class="section-label">Embedding projection (PCA) · ${projection.length} points</div>
+      <svg class="scatter" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${points}</svg>`;
+  }
+
+  async function loadHistory() {
+    deleteBtn.disabled = true;
+    try {
+      const res = await fetch("/experiments");
+      const data = await res.json();
+      historyEl.innerHTML = '<option value="">Load a previous run…</option>' +
+        data.experiments.map(run => `
+          <option value="${escapeAttr(run.id)}">${escapeHtml(new Date(run.created_at).toLocaleString())} — ${escapeHtml(run.question.slice(0, 70))}</option>
+        `).join("");
+    } catch { /* history is optional */ }
+  }
+
+  // Chunk map click: show the clicked chunk's text.
+  resultsEl.addEventListener("click", event => {
+    const seg = event.target.closest(".seg");
+    if (!seg || !state.lastRecord) return;
+    const card = seg.closest(".card");
+    const result = state.lastRecord.results[Number(card.dataset.resultIndex)];
+    if (!result || !result.chunks) return;
+    const id = Number(seg.dataset.id);
+    const chunk = result.chunks[id];
+    const peek = card.querySelector(".peek");
+    if (!peek) return;
+    if (peek.dataset.id === String(id)) {
+      peek.style.display = "none";
+      delete peek.dataset.id;
+      return;
+    }
+    const context = chunk && chunk.context ? `Context: ${chunk.context}\n\n` : "";
+    peek.textContent = context + (chunk ? chunk.text : "");
+    peek.dataset.id = String(id);
+    peek.style.display = "block";
+  });
+
+  configsEl.addEventListener("click", event => {
+    if (!event.target.classList.contains("remove-config")) return;
+    const row = event.target.closest(".config");
+    if (configsEl.querySelectorAll(".config").length === 1) return;
+    row.remove();
+    configsEl.querySelectorAll(".config").forEach((el, i) => {
+      el.dataset.index = i;
+      el.querySelector(".config-title").textContent = `Config ${i + 1}`;
+    });
+    state.count = configsEl.querySelectorAll(".config").length;
+    syncRemoveButtons();
+  });
+
+  document.getElementById("add-config").addEventListener("click", () => {
+    addConfig(DEFAULTS[0]);
+  });
+
+  document.getElementById("lab-upload").addEventListener("click", uploadFile);
+
+  evalSelect.addEventListener("change", () => {
+    const item = (state.evalQuestions || [])[Number(evalSelect.value)];
+    if (!item) return;
+    document.getElementById("question").value = item.question;
+    document.getElementById("keywords").value = (item.keywords || []).join(", ");
+    state.snippets = item.snippets || [];
+    updateSnippetNote();
+    if (item.docs.length) {
+      const known = state.options.documents.map(d => d.name);
+      renderDocuments(item.docs.filter(name => known.includes(name)));
+    }
+    setStatus(`Loaded eval question with ${state.snippets.length} known-answer snippets.`, "");
+  });
+
+  runBtn.addEventListener("click", runExperiment);
+
+  historyEl.addEventListener("change", async () => {
+    const id = historyEl.value;
+    deleteBtn.disabled = !id;
+    if (!id) return;
+    setStatus("Loading run…", "busy");
+    try {
+      const res = await fetch(`/experiments/${encodeURIComponent(id)}`);
+      const record = await res.json();
+      if (!res.ok) throw new Error(record.detail || `Server returned ${res.status}`);
+      document.getElementById("question").value = record.question || "";
+      document.getElementById("keywords").value = (record.expected_keywords || []).join(", ");
+      state.snippets = record.expected_snippets || [];
+      updateSnippetNote();
+      setStatus(`Loaded run ${record.id}.`, "");
+      renderRecord(record);
+    } catch (err) {
+      setStatus(err.message, "error");
+    }
+  });
+
+  deleteBtn.addEventListener("click", async () => {
+    const id = historyEl.value;
+    if (!id || !confirm("Delete this saved run?")) return;
+    try {
+      const res = await fetch(`/experiments/${encodeURIComponent(id)}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `Delete failed (HTTP ${res.status}).`);
+      resultsEl.innerHTML = "";
+      state.lastRecord = null;
+      setStatus(`Deleted run ${id}.`, "");
+      loadHistory();
+    } catch (err) {
+      setStatus(err.message, "error");
+    }
+  });
+
+  loadOptions();
+</script>
+</body>
+</html>

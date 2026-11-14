@@ -1,0 +1,157 @@
+LEFT BEHIND — gaps, deferred work, and known risks
+==================================================
+Status: all planned phases and the follow-up ledger are done except the vector
+database move and page-level citation links. The chatbot answers with pinned
+source chunks (excerpt + full passage), the live path and the CLI share the
+lab's ranking and multi-query, the lab has contextual chunking, the eval set
+covers both local guides, and one command runs both test suites. What remains
+is below.
+
+
+DONE IN THE LATEST ROUND
+------------------------
+- Live multi-query: RETRIEVAL_MULTI_QUERY (0-5) makes /query rewrite the
+  question with the cached `pipeline.rewrite_queries`, average the query
+  embeddings and union the BM25 terms, exactly like the lab.
+- `retrieval.mean_query_vector` is the one averaging helper used by the lab,
+  /query and the CLI.
+- query.py parity: it now prints retrieved sources with scores and excerpts,
+  calls retrieval.rank with the same env knobs, and uses
+  `pipeline.build_prompt` (no second copy of the prompt).
+- /query returns `sources`: one entry per retrieved chunk (file, chunk id,
+  score, snippet), rendered as pinned cards under the answer.
+- Pinned source cards gained a "Full passage" expander; /query returns the
+  full chunk text alongside the 240-character snippet.
+- Multi-query retrieval (rag/pipeline.py `rewrite_queries`): opt-in
+  `retrieval.multi_query` = number of LLM rewrites (0-5). Query embeddings are
+  averaged and BM25 sees the union of terms; reranking still scores against
+  the original question. Rewrites are cached under `cache/rewrites/` by
+  question + count. A failed rewrite falls back to the original question.
+- Contextual chunking: opt-in `chunking.contextual`. One short LLM sentence
+  per chunk is embedded with the chunk (`Chunk.embed_text`) but the displayed
+  text, offsets and prompt stay unchanged. Cached under `cache/contextual/`
+  by document content + chunk config; embeddings get a separate `-ctx` cache.
+- eval/questions.json grew from 4 to 11 labelled questions covering
+  chunking_strategies.md and vector_databases.md.
+- run_tests.py runs both suites, backs up and restores index.pkl and
+  sample_docs/ afterwards. No pytest dependency added.
+- Lab: contextual chunks and multi-query fields, rewrite list in the result
+  card, rewrite latency, and the chunk-map peek shows the context sentence.
+- Chat UI rebuilt: two-column library/desk layout, accessible tabs and drop
+  zone, pinned source cards, sentence-case labels and 4px spacing.
+- Re-ingesting a file now replaces its old chunks instead of appending a
+  second copy (api.py `_add_chunks_to_index`), so source cards no longer
+  repeat the same passage. Covered by test_api.py; the existing duplicated
+  index was also deduplicated once, 47 chunks down to 25.
+
+
+DONE IN THE PREVIOUS ROUND
+--------------------------
+- /query calls retrieval.rank(...), the same helper the experiment runner
+  uses, so both paths score identically. Env: RETRIEVAL_STRATEGY,
+  RETRIEVAL_TOP_K, HYBRID_ALPHA, MMR_LAMBDA, RERANK_MODEL, RERANK_TOP_N.
+  Defaults (vector, top 3) reproduce the old behaviour; an unknown strategy
+  logs a warning and falls back to vector. query.py is unchanged.
+- README deduplicated; table extraction, ECS/Bedrock KB and Troubleshooting
+  kept.
+- Semantic chunking, parent-child chunking, labelled eval set,
+  precision/recall, lexical grounding and metadata filtering.
+- Reranker verified, lab upload, run history and delete/retention
+  (MAX_EXPERIMENT_RUNS, default 100).
+
+
+RETRIEVAL (still deferred)
+--------------------------
+1. No vector database / ANN index. Not planned.
+   Retrieval is a numpy dot product over every chunk and BM25 rebuilds its
+   index per run. Adding Chroma/Qdrant would break the "no extra dependency"
+   rule and is unnecessary at hundreds to a few thousand chunks. Revisit when
+   a real corpus makes a query take seconds.
+
+2. Multi-query rewrites are cached by question only.
+   The cache key ignores the generation backend and model. Editing the rewrite
+   prompt or switching LLM providers needs the cache/rewrites/ folder cleared.
+   Cache failures are not retried; delete the file to retry a bad rewrite.
+
+3. Contextual chunks only see the first 4,000 characters of their document.
+   `_CONTEXT_DOC_CHARS` in rag/pipeline.py. Long PDFs get truncated context,
+   so the situation sentence may miss late-document details. Raising it costs
+   prompt tokens on every chunk.
+
+4. Contextual prefixes feed embeddings only, not BM25 or the prompt.
+   That keeps offsets and displayed text honest, but keyword retrieval does
+   not benefit from the extra context.
+
+5. BGE, E5 and the smaller reranker are unverified offline.
+   Only all-MiniLM-L6-v2 and cross-encoder/ms-marco-MiniLM-L-6-v2 are cached
+   locally. The other options download on first use; prefixes are handled in
+   rag/store.py but were never exercised here.
+
+
+EVALUATION (limits of what exists)
+----------------------------------
+6. The eval set is still small and local.
+   Eleven questions over two guide documents. sample_docs/ is gitignored, so
+   the file references documents that won't exist in a fresh clone. Grow it
+   against your own PDFs before trusting the numbers.
+
+7. Grounding is lexical.
+   A faithful paraphrase scores low; a hallucination that reuses context words
+   scores high. An LLM judge or NLI model would be the real check.
+
+8. Generation is never tested.
+   Both suites run with generate=false for experiments and one real /query
+   call in test_api. Grounding, answer hit-rate, multi-query rewrites and
+   contextual sentences are only meaningful on real generation runs.
+
+9. run_tests.py is not CI.
+   It is a shell-out runner, not a test framework, and it uploads files during
+   test_api. Wire it into GitHub Actions if this ever gets a remote.
+
+
+PERSISTENCE / OPERATIONS
+------------------------
+10. Cache invalidation is manual.
+    Bump _CACHE_VERSION in rag/pipeline.py after changing extraction,
+    chunking, rewrite or contextual prompts. Semantic caches are keyed by
+    model+threshold, parent caches by parent_size, contextual caches by chunk
+    config, and embeddings by a `-ctx` suffix.
+
+11. experiments.jsonl holds full traces, including chunk and parent text.
+    Capped at MAX_EXPERIMENT_RUNS (default 100) with oldest-first pruning, and
+    individual runs can be deleted, but it is still gitignored plain text.
+
+12. No auth, rate limiting, or multi-user separation.
+    The lab endpoints are as open as the rest of the local app.
+
+13. index.pkl is still a pickle.
+    Loading a tampered index executes arbitrary code. Pre-existing risk;
+    experiments never write it, but the chatbot still loads it.
+
+
+CODEBASE / UX
+-------------
+14. /query ports ranking, not chunking.
+    The live index still comes from build_index.py / /ingest/file with
+    fixed-size chunks and one embedding model. Lab-only: recursive, sentence,
+    markdown and semantic chunking, parent-child context, contextual chunks,
+    text/table filter and embedding-model switching.
+
+15. Source cards show an excerpt, the full chunk and a score.
+    They cannot jump to the page or highlight the passage in the original
+    file: Chunk carries no page number and old index entries have
+    start_char/end_char = 0. Page links need page metadata in the index.
+
+16. Old chunks in index.pkl have start_char/end_char = 0.
+    Harmless for prompting; only new experiment chunks carry offsets.
+
+17. PDF table extraction is only covered by test_api.py's synthetic text PDF.
+    Nested-table vision extraction still needs a real document and an API key.
+
+
+SUGGESTED ORDER IF CONTINUED
+----------------------------
+A. Grow eval/questions.json against the real PDFs in sample_docs/, then run
+   every strategy against it and keep the winners.
+B. Store page numbers per chunk so pinned sources can open the right PDF page.
+C. Replace the numpy store with Chroma/Qdrant only when corpus size demands it.

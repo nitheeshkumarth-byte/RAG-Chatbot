@@ -24,6 +24,14 @@ class Chunk:
                               # never split by chunk_text(), since breaking
                               # a table mid-row destroys the row/column
                               # relationships that make it useful at all
+    start_char: int = 0       # character offsets in the source text, so the
+    end_char: int = 0         # UI can show where a chunk came from
+    strategy: str = "fixed"   # which chunking strategy produced it
+    parent_text: str = ""     # enclosing parent chunk, when parent-child
+                              # chunking is on; retrieval uses this chunk,
+                              # the prompt gets the parent
+    embed_text: str = ""      # text sent to the embedding model when it
+                              # differs from .text (contextual chunking)
 
 
 def extract_pdf_text(path: str) -> str:
@@ -367,6 +375,8 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]
     if len(words) <= chunk_size:
         return [text]
 
+    # Clamp so the step (chunk_size - overlap) is always positive.
+    overlap = max(0, min(overlap, chunk_size - 1))
     chunks = []
     start = 0
     while start < len(words):

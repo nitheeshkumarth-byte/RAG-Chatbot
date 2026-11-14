@@ -16,11 +16,14 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from rag import pipeline, retrieval
+from rag.chunking import STRATEGIES
 from rag.generate import generate_answer
 from rag.ingest import chunk_single_document, extract_pdf_text, extract_tables_from_pdf, extract_url_text, slugify
-from rag.store import VectorStore
+from rag.retrieval import RETRIEVAL_STRATEGIES
+from rag.store import VectorStore, encode_query
 
 # ---------------------------------------------------------------------------
 # Logging setup — module-level, so all log calls share the same logger name.
@@ -37,6 +40,21 @@ load_dotenv()  # reads .env into os.environ (local dev only; ignored if vars alr
 INDEX_PATH = os.environ.get("INDEX_PATH", "index.pkl")
 DOCS_FOLDER = os.environ.get("DOCS_FOLDER", "sample_docs")
 TOP_K = 3
+# Live /query retrieval. The defaults reproduce the original vector/top-3
+# search; set e.g. RETRIEVAL_STRATEGY=hybrid, RERANK_MODEL=... to use a
+# lab-winning config without touching code.
+RETRIEVAL_STRATEGY = os.environ.get("RETRIEVAL_STRATEGY", "vector")
+RETRIEVAL_TOP_K = max(1, int(os.environ.get("RETRIEVAL_TOP_K", str(TOP_K))))
+HYBRID_ALPHA = float(os.environ.get("HYBRID_ALPHA", "0.5"))
+MMR_LAMBDA = float(os.environ.get("MMR_LAMBDA", "0.7"))
+RETRIEVAL_MULTI_QUERY = min(5, max(0, int(os.environ.get("RETRIEVAL_MULTI_QUERY", "0"))))
+RERANK_MODEL = os.environ.get("RERANK_MODEL") or None
+RERANK_TOP_N = max(1, int(os.environ.get("RERANK_TOP_N", str(RETRIEVAL_TOP_K))))
+if RETRIEVAL_STRATEGY not in RETRIEVAL_STRATEGIES:
+    logger.warning(
+        f"Unknown RETRIEVAL_STRATEGY {RETRIEVAL_STRATEGY!r}; falling back to 'vector'."
+    )
+    RETRIEVAL_STRATEGY = "vector"
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md"}
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB guard (UploadFile streams, so this is a soft check)
 
@@ -83,8 +101,17 @@ class QueryRequest(BaseModel):
     question: str
 
 
+class SourceRef(BaseModel):
+    source: str
+    chunk_id: int
+    score: float
+    snippet: str
+    text: str
+
+
 class QueryResponse(BaseModel):
     answer: str
+    sources: list[SourceRef] = Field(default_factory=list)
 
 
 class UrlIngestRequest(BaseModel):
@@ -95,6 +122,15 @@ class IngestResponse(BaseModel):
     filename: str
     chunks_added: int
     total_chunks: int
+
+
+class ExperimentRequest(BaseModel):
+    question: str
+    docs: list[str] = Field(default_factory=list)
+    configs: list[dict] = Field(default_factory=list)
+    generate: bool = True
+    expected_keywords: list[str] = Field(default_factory=list)
+    expected_snippets: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -114,27 +150,55 @@ def _safe_filename(raw: str) -> str:
     return name or "upload"
 
 
-def build_prompt(question: str, results) -> str:
-    context = "\n\n".join(
-        f"[Source: {r.chunk.source}]\n{r.chunk.text}" for r in results
-    )
-    return f"""Answer the question using ONLY the context below. If the context
-doesn't contain the answer, say so explicitly instead of guessing.
-
-Context:
-{context}
-
-Question: {question}
-
-Answer:"""
-
-
 def _add_chunks_to_index(chunks) -> None:
     """Embed a new batch of chunks, add them to the in-memory store, and
     persist the updated index to disk so it survives a server restart."""
+    # Re-ingesting the same file must replace it, not append a second copy.
+    for source in {c.source for c in chunks}:
+        if source in store.sources():
+            store.remove_source(source)
     store.add(chunks)
     store.save(INDEX_PATH)
     logger.info(f"Index updated and saved to {INDEX_PATH!r} ({len(store.chunks)} total chunks)")
+
+
+def _live_search(question: str):
+    """(chunk, score) pairs from the live index, ranked like the lab."""
+    rewrites = (
+        pipeline.rewrite_queries(question, RETRIEVAL_MULTI_QUERY)
+        if RETRIEVAL_MULTI_QUERY else []
+    )
+    query_vec = encode_query(store.model_name, question)
+    if rewrites:
+        query_vec = retrieval.mean_query_vector([
+            query_vec,
+            *[encode_query(store.model_name, q) for q in rewrites],
+        ])
+    indices, details, _ = retrieval.rank(
+        question,
+        [c.text for c in store.chunks],
+        store.embeddings,
+        query_vec,
+        strategy=RETRIEVAL_STRATEGY,
+        top_k=RETRIEVAL_TOP_K,
+        alpha=HYBRID_ALPHA,
+        lam=MMR_LAMBDA,
+        bm25_query=" ".join([question] + rewrites),
+        reranker=RERANK_MODEL,
+        rerank_top_n=RERANK_TOP_N,
+    )
+    results = []
+    for i in indices:
+        scores = details[i]
+        score = scores["rerank"] if scores["rerank"] is not None else scores["rank"]
+        results.append((store.chunks[i], score))
+    return results
+
+
+def _snippet(text: str, limit: int = 240) -> str:
+    """Short single-line excerpt for a source card."""
+    clean = " ".join(text.split())
+    return clean if len(clean) <= limit else clean[:limit].rsplit(" ", 1)[0] + "…"
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +207,16 @@ def _add_chunks_to_index(chunks) -> None:
 @app.get("/")
 def serve_frontend():
     return FileResponse("static/index.html")
+
+
+@app.get("/lab")
+def serve_lab():
+    return FileResponse("static/lab.html")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return FileResponse("static/favicon.svg", media_type="image/svg+xml")
 
 
 @app.get("/health")
@@ -292,6 +366,55 @@ def ingest_url(req: UrlIngestRequest):
     )
 
 
+# ---------------------------------------------------------------------------
+# Experiment endpoints — isolated from the live chatbot index above.
+# ---------------------------------------------------------------------------
+@app.get("/experiments/options")
+def experiment_options():
+    """Everything the lab UI needs to build a config."""
+    return {
+        "documents": pipeline.list_documents(),
+        "chunking_strategies": list(STRATEGIES),
+        "embedding_models": pipeline.EMBEDDING_MODELS,
+        "retrieval_strategies": list(RETRIEVAL_STRATEGIES),
+        "rerank_models": pipeline.RERANK_MODELS,
+    }
+
+
+@app.post("/experiments/run")
+def run_experiment(req: ExperimentRequest):
+    try:
+        return pipeline.run_experiment(req.model_dump())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/experiments")
+def list_experiments(limit: int = 20):
+    return {"experiments": pipeline.list_runs(min(max(limit, 1), 100))}
+
+
+@app.get("/experiments/eval")
+def experiment_eval():
+    """Labelled sample questions from eval/questions.json (empty if absent)."""
+    return {"questions": pipeline.list_eval_questions()}
+
+
+@app.get("/experiments/{run_id}")
+def get_experiment(run_id: str):
+    record = pipeline.get_run(run_id)
+    if record is None:
+        raise HTTPException(404, f"No experiment with id '{run_id}'.")
+    return record
+
+
+@app.delete("/experiments/{run_id}")
+def delete_experiment(run_id: str):
+    if not pipeline.delete_run(run_id):
+        raise HTTPException(404, f"No experiment with id '{run_id}'.")
+    return {"deleted": run_id}
+
+
 @app.post("/query", response_model=QueryResponse)
 def query(req: QueryRequest):
     question = req.question.strip()
@@ -301,8 +424,8 @@ def query(req: QueryRequest):
     if not store.chunks:
         return QueryResponse(answer="Nothing's been indexed yet — add a file or URL above first.")
 
-    results = store.search(question, top_k=TOP_K)
-    prompt = build_prompt(question, results)
+    results = _live_search(question)
+    prompt = pipeline.build_prompt(question, [chunk for chunk, _ in results])
 
     try:
         answer = generate_answer(prompt)
@@ -311,4 +434,16 @@ def query(req: QueryRequest):
         logger.error(f"Answer generation failed for query {question[:80]!r}: {e}", exc_info=True)
         return QueryResponse(answer=f"Answer generation failed: {e}")
 
-    return QueryResponse(answer=answer)
+    return QueryResponse(
+        answer=answer,
+        sources=[
+            SourceRef(
+                source=chunk.source,
+                chunk_id=chunk.chunk_id,
+                score=round(float(score), 3),
+                snippet=_snippet(chunk.parent_text or chunk.text),
+                text=chunk.parent_text or chunk.text,
+            )
+            for chunk, score in results
+        ],
+    )

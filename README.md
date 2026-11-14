@@ -19,6 +19,7 @@ libraries.
 4. [How it works (pipeline)](#how-it-works-pipeline)
 5. [Module-by-module reference](#module-by-module-reference)
    - [`rag/ingest.py`](#ragingestpy)
+   - [Experiment layer](#experiment-layer-ragchunkingpy-ragretrievalpy-ragpipelinepy)
    - [`rag/store.py`](#ragstorepy)
    - [`rag/generate.py`](#raggeneratepy)
    - [`api.py`](#apipy)
@@ -29,9 +30,9 @@ libraries.
 6. [Installation](#installation)
 7. [Configuration (`.env`)](#configuration-env)
 8. [Running the web app](#running-the-web-app)
-9. [Web UI walkthrough](#web-ui-walkthrough)
+9. [Pipeline lab (`/lab`)](#pipeline-lab-lab)
 10. [HTTP API reference](#http-api-reference)
-11. [Command-line workflow](#command-line-workflow)
+11. [Command-line workflow](#command-line-workflow-alternative)
 12. [Data & persistence](#data--persistence)
 13. [Docker](#docker)
 14. [Deployment](#deployment)
@@ -54,8 +55,9 @@ libraries.
   (`all-MiniLM-L6-v2`) — free, runs on your machine, no API key.
 - **Store** the embeddings in plain **numpy** arrays persisted to
   `index.pkl` (no vector database server).
-- **Retrieve** the top-3 most similar chunks to a user's question using
-  **cosine similarity** (implemented as a dot product on normalized vectors).
+- **Retrieve** the top chunks for a user's question with configurable ranking:
+  **cosine similarity** by default (a dot product on normalized vectors), with
+  optional BM25, hybrid, MMR and cross-encoder reranking.
 - **Generate** a grounded answer from Gemini or Bedrock/Claude using a prompt
   that instructs the model to answer *only from the retrieved context*.
 
@@ -82,11 +84,17 @@ GenAi_RAG/
 ├── DEPLOY_DOCKER_BEDROCK.md   # EC2 + Docker + Bedrock deployment guide
 ├── rag/                       # The RAG pipeline package (importable as "rag")
 │   ├── __init__.py            # Empty package marker
-│   ├── ingest.py              # Document loading + chunking
+│   ├── ingest.py              # Document loading + legacy chunking
+│   ├── chunking.py            # Chunking strategies (fixed → semantic)
+│   ├── retrieval.py           # BM25, hybrid, MMR, reranking
+│   ├── pipeline.py            # Experiment runner: caches, traces, persistence
 │   ├── store.py               # Embedding + similarity search + persistence
 │   └── generate.py            # LLM generation (Gemini / Bedrock backends)
+├── eval/
+│   └── questions.json         # Labelled questions + known-answer snippets
 ├── static/
-│   └── index.html             # Single-page frontend (no build step)
+│   ├── index.html             # Single-page chatbot frontend (no build step)
+│   └── lab.html               # Experiment UI (/lab)
 └── sample_docs/               # Sample documents for the CLI path
     ├── vector_databases.md
     ├── chunking_strategies.md
@@ -147,10 +155,12 @@ Browser upload / URL             your_docs/*.md  (CLI path)
                                               │ vectors in numpy
                                               ▼
                               POST /query OR query.py
-                                              │ embeds your question, finds
-                                              │ the top-3 most similar chunks
-                                              │ (cosine similarity), stuffs
-                                              │ them into a prompt
+                                              │ embeds your question, ranks
+                                              │ chunks (same rank() for
+                                              │ /query and query.py: vector
+                                              │ by default, BM25/hybrid/MMR,
+                                              │ multi-query, reranking),
+                                              │ stuffs them into a prompt
                                               ▼
                                         generate.py
                                               │ generates a grounded answer
@@ -222,6 +232,25 @@ Format-agnostic loading and chunking. Exposes:
 > (which relies on the module defaults) produces ~500-word chunks. Both are
 > consistent within themselves, but you'll see different counts between the
 > two entry points.
+
+### Experiment layer (`rag/chunking.py`, `rag/retrieval.py`, `rag/pipeline.py`)
+
+The `/lab` backend. It is separate from the chatbot path on purpose: a run
+builds its own chunk list and embeddings and never writes `index.pkl`.
+
+- **`chunking.py`** — `split_text(text, strategy, size, overlap, model,
+  threshold)` returns `Piece`s that are exact `text[start:end]` slices, so the
+  UI can map a chunk back to the source. Strategies: `fixed`, `recursive`,
+  `sentence`, `markdown`, `semantic`. Semantic embeds sentences with the
+  configured model and breaks where the cosine distance between neighbours
+  exceeds `threshold`.
+- **`retrieval.py`** — `BM25` (no external dependency), `minmax` blending for
+  hybrid search, `mmr` for diversity, and `rerank` via a `CrossEncoder`.
+- **`pipeline.py`** — config validation (the browser trust boundary),
+  content-hash caches for extracted text / chunks / embeddings, `run_config`
+  (returns the full trace and metrics), and JSONL persistence with a retention
+  cap. Parent-child mode tags each child chunk with its parent's text; the
+  prompt gets the parent, retrieval ranks the child.
 
 ### `rag/store.py`
 
@@ -300,7 +329,12 @@ FastAPI app wrapping the pipeline for the browser and HTTP clients.
 - `load_dotenv()` loads `.env` into `os.environ`.
 - `INDEX_PATH = os.environ.get("INDEX_PATH", "index.pkl")`
 - `DOCS_FOLDER = os.environ.get("DOCS_FOLDER", "sample_docs")`
-- `TOP_K = 3` — fixed retrieval count for the `/query` endpoint.
+- `TOP_K = 3` — default retrieval count for `/query`.
+- `RETRIEVAL_STRATEGY`, `RETRIEVAL_TOP_K`, `HYBRID_ALPHA`, `MMR_LAMBDA`,
+  `RETRIEVAL_MULTI_QUERY`, `RERANK_MODEL`, `RERANK_TOP_N` — live `/query`
+  retrieval config, all env-overridable (see Configuration). The defaults
+  reproduce the original vector/top-3 search; an unknown `RETRIEVAL_STRATEGY`
+  falls back to `vector` with a log warning.
 - `ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md"}`
 - `DOCS_FOLDER` is created with `os.makedirs(..., exist_ok=True)` at import.
 - `/static` is mounted at `/static`, and `static/index.html` is the root page.
@@ -311,14 +345,22 @@ FastAPI app wrapping the pipeline for the browser and HTTP clients.
   paying the multi-second embedding-model load cost per request.
 
 **Helpers:**
-- `build_prompt(question, results)` — joins the top results as
+- `_live_search(question)` — optionally rewrites the question
+  (`RETRIEVAL_MULTI_QUERY`), averages the query embeddings, then calls
+  `retrieval.rank(...)` with the retrieval constants above, so the live
+  `/query` path scores exactly like the experiment runner. Returns
+  `(Chunk, score)` pairs.
+- `build_prompt(question, chunks)` — joins chunks as
   `[Source: <source>]\n<text>` blocks separated by blank lines and wraps them
   in a grounded-answer prompt that instructs the model to say so explicitly
   if the context doesn't contain the answer.
-- `_add_chunks_to_index(chunks)` — calls `store.add(chunks)` then
-  `store.save(INDEX_PATH)` so every ingest persists immediately.
+- `_add_chunks_to_index(chunks)` — drops any existing chunks from the same
+  source(s), then calls `store.add(chunks)` and `store.save(INDEX_PATH)` so
+  re-uploading a file replaces it instead of duplicating it.
 
-**Pydantic models:** `QueryRequest {question}`, `QueryResponse {answer}`,
+**Pydantic models:** `QueryRequest {question}`,
+`QueryResponse {answer, sources: [SourceRef]}`,
+`SourceRef {source, chunk_id, score, snippet, text}`,
 `UrlIngestRequest {url}`, `IngestResponse {filename, chunks_added, total_chunks}`.
 
 ### `build_index.py`
@@ -338,11 +380,14 @@ the folder given — it does not merge with an existing index.**
 Terminal question-asking. Usage:
 `python query.py "What is HNSW used for?"`
 
-Loads the store (same `INDEX_PATH` default), retrieves `TOP_K = 3` chunks,
-prints each result as `  [<score:.3f>] <source> (chunk <chunk_id>)`, builds
-the same prompt shape as `api.py`, calls `generate_answer`, and prints the
-answer. Calls `load_dotenv()` itself. Errors print straight to stdout —
-there's no HTTP layer here.
+Loads the store (same `INDEX_PATH` default), retrieves `RETRIEVAL_TOP_K`
+chunks through the shared `retrieval.rank(...)`, and honours the same env
+knobs as the web UI (`RETRIEVAL_STRATEGY`, `HYBRID_ALPHA`, `MMR_LAMBDA`,
+`RETRIEVAL_MULTI_QUERY`, `RERANK_MODEL`, `RERANK_TOP_N`). It prints each
+source as `  [<score:.3f>] <source> (chunk <chunk_id>)` with a short excerpt,
+builds the prompt with `pipeline.build_prompt`, calls `generate_answer`, and
+prints the answer. Calls `load_dotenv()` itself. Errors print straight to
+stdout — there's no HTTP layer here.
 
 ### `fetch_url.py`
 
@@ -417,6 +462,13 @@ default — but answers fail without the right generation config.
 |---|---|---|---|
 | `INDEX_PATH` | `index.pkl` | `api.py`, `build_index.py`, `query.py` | Where the pickled index is saved/loaded |
 | `DOCS_FOLDER` | `sample_docs` | `api.py` | Where uploads/URL extractions are written |
+| `RETRIEVAL_STRATEGY` | `vector` | `api.py`, `query.py` | `/query` ranking: `vector`, `bm25`, `hybrid` or `mmr` |
+| `RETRIEVAL_TOP_K` | `3` | `api.py`, `query.py` | Number of chunks sent to the prompt |
+| `HYBRID_ALPHA` | `0.5` | `api.py`, `query.py` | Vector vs BM25 blend for `hybrid` (1 = vector only) |
+| `MMR_LAMBDA` | `0.7` | `api.py`, `query.py` | Relevance vs diversity for `mmr` (1 = relevance only) |
+| `RETRIEVAL_MULTI_QUERY` | `0` (off) | `api.py`, `query.py` | LLM query rewrites, 0–5; averaged embeddings + unioned BM25 terms |
+| `RERANK_MODEL` | — (off) | `api.py`, `query.py` | Cross-encoder model, e.g. `cross-encoder/ms-marco-MiniLM-L-6-v2` |
+| `RERANK_TOP_N` | `RETRIEVAL_TOP_K` | `api.py`, `query.py` | Chunks kept after reranking |
 | `GENERATION_BACKEND` | `gemini` | `rag/generate.py` | `gemini` or `bedrock` |
 | `GEMINI_API_KEY` | — (error if unset) | `rag/generate.py` | Google AI Studio key |
 | `GEMINI_MODEL` | `gemini-2.5-flash` | `rag/generate.py` | Gemini model name |
@@ -458,6 +510,35 @@ makes it reachable from other machines / the browser on deployment.
 2. **Ask a question** — it's answered using *only* the sources you've added.
    A loading dot shows while retrieval + generation run.
 
+### Pipeline lab (`/lab`)
+
+The chatbot above uses one fixed pipeline. `/lab` runs the same question
+through up to six configurations side by side:
+
+- **Chunking** — fixed, recursive, sentence, markdown headings, or semantic
+  (splits where neighbouring sentences stop being similar; adjustable
+  threshold). Optional parent-child mode retrieves small chunks but sends the
+  enclosing parent to the model.
+- **Embeddings** — MiniLM, BGE small, E5 small (each model's required
+  query/passage prefixes are applied automatically).
+- **Retrieval** — vector, BM25, hybrid (adjustable alpha), or MMR (adjustable
+  lambda), with optional cross-encoder reranking and a text/table metadata
+  filter.
+- **Trace** — chunk map, per-chunk scores, rerank order, prompt, answer, stage
+  latencies, and a PCA scatter of the chunk embeddings.
+- **Evaluation** — expected keywords produce retrieval and answer hit rates;
+  known-answer snippets produce precision@k and recall@k; answers get a lexical
+  grounding score (share of answer content words found in the context). The
+  dropdown loads labelled questions and snippets from `eval/questions.json`.
+
+Files can be uploaded from the lab page as well; uploads also enter the
+chatbot's index, but running experiments never modifies it. Runs are appended
+to `experiments.jsonl` and pruned at `MAX_EXPERIMENT_RUNS` (default 100);
+individual runs can be deleted from the history dropdown. Extracted text,
+chunks and embeddings are cached under `cache/`, keyed by file content, so
+changing a retrieval setting is instant and re-running a config never
+re-parses or re-embeds anything.
+
 ### Command-line workflow (alternative)
 
 ```bash
@@ -465,6 +546,24 @@ python build_index.py path/to/your/folder   # chunks + embeds the folder
 python query.py "your question"              # ask from the terminal
 python fetch_url.py https://…/some-post      # save an article into sample_docs/
 ```
+
+### Table extraction (including nested tables)
+
+PDFs with tables get special handling beyond the plain text extraction
+above: `rag/ingest.py` also runs `pdfplumber` over every PDF, detects tables,
+and turns each one into its own dedicated chunk — a clean Markdown table
+instead of the jumbled, row/column-less text that plain extraction produces
+for anything tabular.
+
+For tables that look nested (a cell containing another table inside it —
+something a flat grid parser reliably mangles), it falls back to rendering
+that page as an image and asking a vision-capable model (Gemini) to transcribe
+the table directly, preserving the nested structure. This adds one LLM call
+per nested table found, only when needed — regular flat tables never trigger
+it.
+
+Table chunks show up in `build_index.py`'s output as a separate count
+(`Created N chunks (X text, Y table)`) so you can see how many were found.
 
 ---
 
@@ -475,6 +574,60 @@ Base URL: `http://localhost:8000` (or your deployed host).
 ### `GET /`
 Serves `static/index.html` (the single-page UI). All routes are served by
 FastAPI; the browser hits them directly.
+
+### `GET /lab`
+Serves `static/lab.html` (the experiment UI).
+
+### `GET /experiments/options`
+Returns the documents in `DOCS_FOLDER` plus the allowed chunking, embedding,
+retrieval and rerank options — everything the lab UI needs to build a config.
+
+### `POST /experiments/run`
+JSON body:
+
+```json
+{
+  "question": "What is chunking?",
+  "docs": ["chunking_strategies.md"],
+  "generate": false,
+  "expected_keywords": ["chunking", "overlap"],
+  "expected_snippets": ["embed individual sentences"],
+  "configs": [
+    {
+      "chunking":  {"strategy": "recursive", "size": 400, "overlap": 60,
+                    "threshold": 0.75, "parent_size": 0},
+      "embedding": {"model": "BAAI/bge-small-en-v1.5"},
+      "retrieval": {"strategy": "hybrid", "top_k": 4, "alpha": 0.5, "lambda": 0.7,
+                    "chunk_type": "any"},
+      "rerank":    {"model": "cross-encoder/ms-marco-MiniLM-L-6-v2", "top_n": 3}
+    }
+  ]
+}
+```
+
+`threshold` only affects semantic chunking; `parent_size` (words, 0 = off)
+turns on parent-child chunking and must exceed the chunk size; `chunk_type`
+is `any`, `text` or `table`. `expected_snippets` are known-answer phrases used
+for precision@k (share of retrieved chunks containing one) and recall@k
+(share of snippets found anywhere in the retrieved set).
+
+Runs each config and returns the full trace (chunks, retrieved chunks with
+scores, projection, prompt, answer, metrics, latencies). A config that fails
+is returned as `{"config": …, "error": "…"}` rather than failing the run.
+**400** for invalid configs, unknown documents, or more than 6 configs.
+
+### `GET /experiments/eval`
+Labelled questions from `eval/questions.json` — each with `question`, `docs`,
+`snippets` and `keywords`. Returns an empty list when the file is absent.
+
+### `GET /experiments?limit=20`
+Summaries of saved runs, newest first.
+
+### `GET /experiments/{run_id}`
+One saved run, including every trace.
+
+### `DELETE /experiments/{run_id}`
+Deletes one saved run. **404** if the id doesn't exist.
 
 ### `GET /sources`
 - Response: `{"sources": [<filename>, ...], "total_chunks": <int>}`
@@ -506,12 +659,17 @@ JSON body: `{"question": "…"}`.
 - If `store.chunks` is empty → **200** with
   `answer = "Nothing's been indexed yet — add a file or URL above first."`
   (the CLI prints a similar message and exits).
-- Otherwise retrieves `TOP_K = 3` chunks, builds the grounded prompt, and
-  calls `generate_answer`.
+- Otherwise retrieves `RETRIEVAL_TOP_K` chunks with `RETRIEVAL_STRATEGY`
+  (default: vector, top 3 — the original behaviour), optionally rewriting the
+  query (`RETRIEVAL_MULTI_QUERY`) and reranking, builds the grounded prompt,
+  and calls `generate_answer`.
 - If generation raises → **200** with
   `answer = "ERROR generating answer: {e}"` (errors are returned as answers,
   not as HTTP errors).
-- On success → `{"answer": "<generated text>"}`.
+- On success →
+  `{"answer": "<generated text>", "sources": [{"source", "chunk_id", "score", "snippet", "text"}]}`.
+  Each source is one retrieved chunk: `snippet` is a 240-character excerpt and
+  `text` is the full chunk (or its parent when parent-child chunking is on).
 
 ### `DELETE /sources/{filename}`
 Removes one source (and all its chunks/embeddings) from the store, persists,
@@ -534,6 +692,14 @@ and returns `{"removed": <filename>, "total_chunks": <int>}`.
   re-ingested at startup — the index is self-contained.
 - **Memory** — chunks + embeddings live in RAM for the process lifetime
   (numpy arrays). Large corpora will eat memory accordingly.
+- **Experiment cache (`cache/`)** — extracted text, chunks and embeddings
+  keyed by file content plus chunk config (and model, for semantic chunking).
+  Gitignored; delete it or bump `_CACHE_VERSION` in `rag/pipeline.py` after
+  changing extraction or chunking code.
+- **Run history (`experiments.jsonl`)** — one JSON line per run, including
+  full traces and chunk text. Gitignored; pruned at `MAX_EXPERIMENT_RUNS`.
+- **Eval set (`eval/questions.json`)** — questions, the documents they target,
+  and known-answer snippets. Override the path with `EVAL_PATH`.
 - **Concurrency** — there is no locking around `store.add/save`; two
   simultaneous ingests could in principle race on the `index.pkl` write.
   Fine for single-user use.
@@ -571,7 +737,7 @@ For the volume mount to matter, `.env` must set
 
 ## Deployment
 
-Two documented paths — **same code either way**; only `GENERATION_BACKEND`
+Three documented paths — **same core app either way**; only `GENERATION_BACKEND`
 in `.env` differs.
 
 - **[`DEPLOY_AWS.md`](./DEPLOY_AWS.md)** — one EC2 instance (Ubuntu 22.04,
@@ -591,6 +757,13 @@ in `.env` differs.
   `docker run` flags, updates after code changes, and Bedrock-specific
   troubleshooting (`AccessDeniedException`, model-ID vs cross-region
   inference-profile ID, container crash logs, "works locally but not on EC2").
+- **[`DEPLOY_ECS_EXPRESS_KB.md`](./DEPLOY_ECS_EXPRESS_KB.md)** — the
+  fully-managed path: ECS Express Mode + Bedrock Knowledge Bases (S3 + Titan
+  embeddings + OpenSearch Serverless) replace the local ingestion/retrieval
+  pipeline entirely (`api_kb.py` instead of `api.py`). Most infrastructure,
+  least code you wrote yourself — read the trade-off note in that guide
+  before committing to it. (Replaces the earlier App Runner plan; App Runner
+  closed to new customers on April 30, 2026.)
 
 ---
 
@@ -625,11 +798,14 @@ in `.env` differs.
   `index.pkl`. Use the API for incremental adds.
 - **Similarity is cosine similarity** via dot product, valid only because
   embeddings are encoded with `normalize_embeddings=True`.
-- **Reference integrity:** `api.py` and `query.py` each define their own
-  `build_prompt` — the same prompt text in two places. Keep them in sync if
-  you edit the prompt.
-- **`TOP_K = 3`** is a module constant duplicated in both `api.py` and
-  `query.py`.
+- **Reference integrity:** `api.py` and `query.py` both use
+  `pipeline.build_prompt`; only one copy of the prompt text exists.
+- **`/query` shares the lab's ranking code, not its chunking or embedding
+  choices.** The live index is built by `build_index.py` / `/ingest/file` with
+  fixed-size chunks and one embedding model. `RETRIEVAL_STRATEGY`,
+  `RETRIEVAL_TOP_K`, `RETRIEVAL_MULTI_QUERY` and `RERANK_MODEL` only change how
+  those chunks are ranked; contextual chunks, parent-child context and semantic
+  chunking exist only in the lab.
 - **Startup cost.** The embedding model is loaded once at API import; the
   first request after boot is fast, but *process start* takes a couple of
   seconds plus whatever it takes to unpickle the index.
@@ -638,9 +814,9 @@ in `.env` differs.
   catches the empty-text case with a 400; the CLI doesn't).
 - **URL ingests write files** to `DOCS_FOLDER` but the source name shown is
   the `<slug>.txt` filename, not the URL.
-- **Pin-count drift:** `DELETE /sources` and uploads **overwrite** same-named
-  files in `DOCS_FOLDER`, but the index entries are keyed by filename and
-  source names are only deduped from what's currently in the store.
+- **Re-uploads replace, they don't merge:** uploading a file whose name is
+  already indexed drops the old chunks first, so the store never holds two
+  copies of the same document.
 - **`sample_docs/` name collision with `DOCS_FOLDER`.** The default
   `DOCS_FOLDER` is `sample_docs` — uploads land in the same folder the CLI
   reads. That's by design (one shared folder), but be aware files there are
@@ -670,123 +846,44 @@ in `.env` differs.
 
 - No OCR — scanned/image PDFs won't work (would need `pytesseract` +
   preprocessing).
-- Fixed-size word chunking only — no structure-aware or semantic chunking yet.
-- Retrieval is top-3 cosine only — no hybrid (keyword+vector) search, no
-  reranker, no metadata filtering.
-- Vector store is an in-memory numpy array persisted with pickle —
-  no incremental `load` merge, no approximate-nearest-neighbor index (HNSW/
-  IVF), no horizontal scaling, no transactional safety. At a few hundred
-  chunks this is fine; beyond that, move to Chroma/Qdrant/pgvector.
-- No eval set or automated tests — quality is assessed by eyeballing
-  `[score]` values and reading answers.
+- The live chatbot still uses fixed-size word chunking. `/query` retrieval is
+  configurable (strategy, top-k, multi-query, reranking) but the lab's chunking
+  modes, contextual chunks, parent-child context and text/table filter stay in
+  `/lab`.
+- Contextual chunking is lab-only: it changes what gets embedded, so the live
+  index would have to be rebuilt to use it. Multi-query rewrites need a working
+  generation backend; a failed rewrite falls back to the original question.
+- The vector store is an in-memory numpy array persisted with pickle — no
+  incremental `load` merge, no approximate-nearest-neighbor index (HNSW/IVF),
+  no horizontal scaling, no transactional safety. At a few hundred chunks this
+  is fine; beyond that, move to Chroma/Qdrant/pgvector.
+- Evaluation is hint-based: keyword hit rates, snippet-based precision@k /
+  recall@k, and a *lexical* grounding score. None of them judge whether a
+  paraphrase is faithful.
+- Experiments are single-process. Each run stores a full trace in
+  `experiments.jsonl`; the oldest runs are pruned at `MAX_EXPERIMENT_RUNS`
+  (default 100), and individual runs can be deleted from the lab or via
+  `DELETE /experiments/{run_id}`.
 - Single-process, single-user: no auth, no rate limiting, no multi-user
   separation, no locking on the index writes.
 
 ---
 
 ## Suggested next steps
-=======
-Open **http://localhost:8000**. From there:
-
-1. **Add a source** — either drag/click a `.pdf`/`.txt`/`.md` file into the
-   upload panel, or paste a blog post URL and hit Add. Each one gets chunked
-   and embedded on the spot; you'll see it appear in the indexed-sources
-   list below the panel, with a "Remove" button if you want to drop it.
-2. **Ask a question** in the box underneath — it's answered using only the
-   sources you've added.
-
-The index persists to `index.pkl`, so anything you add is still there next
-time you start the server. No separate build step needed anymore — the old
-`build_index.py`/`sample_docs/` workflow still works too (see below) if you
-prefer preparing documents from the command line instead of the browser.
-
-## Command-line workflow (optional)
-
-If you'd rather not use the browser upload panel, you can still prep a
-folder of documents ahead of time:
-
-```bash
-python build_index.py path/to/your/folder    # chunks + embeds everything in the folder
-python query.py "your question"               # ask from the terminal
-```
-
-### Table extraction (including nested tables)
-
-PDFs with tables get special handling beyond the plain text extraction
-above: `rag/ingest.py` also runs `pdfplumber` over every PDF, detects
-tables, and turns each one into its own dedicated chunk — a clean Markdown
-table instead of the jumbled, row/column-less text that plain extraction
-produces for anything tabular.
-
-For tables that look nested (a cell containing another table inside it —
-something a flat grid parser reliably mangles), it falls back to rendering
-that page as an image and asking a vision-capable model (Gemini) to
-transcribe the table directly, preserving the nested structure. This adds
-one LLM call per nested table found, only when needed — regular flat
-tables never trigger it.
-
-Table chunks show up in `build_index.py`'s output as a separate count
-(`Created N chunks (X text, Y table)`) so you can see how many were found.
-
-### A note on PDFs
-
-`pypdf` extracts text directly from the PDF's internal structure — it does
-**not** do OCR. That means it works well for PDFs that were generated
-digitally (exported from Word, LaTeX, a web page, etc.) but will return
-empty or near-empty text for scanned/photographed pages, since there's no
-actual text layer to pull from. If `build_index.py` reports suspiciously
-few words for a PDF you added, that's the likely cause — you'd need an OCR
-step (e.g. `pytesseract`) before this pipeline can use it.
-
-## How it works
-
-```
-Browser upload/URL       your_docs/*.md (CLI path)
-       │                          │
-       ▼                          ▼
-  /ingest/file  ┐          ingest.py    → splits each source into
-  /ingest/url   ┴────────────────┴────────overlapping ~300-word chunks
-                                  │
-                                  ▼
-                            store.py     → embeds each chunk with
-                                            sentence-transformers, stores
-                                            vectors in numpy (index.pkl)
-                                  │
-                                  ▼
-                          /query OR      → embeds your question, finds
-                          query.py         the top-3 most similar chunks,
-                                            stuffs them into a prompt,
-                                            sends it to Gemini for a
-                                            grounded answer
-
-Both the browser upload panel and the CLI (build_index.py / fetch_url.py)
-funnel into the same chunk → embed → store pipeline — ingestion is the
-only layer that knows about file formats or URLs.
-```
-
-## Deploying it
-
-Three deployment paths, same core app either way:
-
-- [`DEPLOY_AWS.md`](./DEPLOY_AWS.md) — EC2 with a plain Python venv, Gemini for generation
-- [`DEPLOY_DOCKER_BEDROCK.md`](./DEPLOY_DOCKER_BEDROCK.md) — EC2 with Docker, Amazon Bedrock (Claude) for generation, no API key to manage (uses an IAM role instead)
-- [`DEPLOY_ECS_EXPRESS_KB.md`](./DEPLOY_ECS_EXPRESS_KB.md) — the fully-managed AWS path: ECS Express Mode + Bedrock Knowledge Bases (S3 + Titan embeddings + OpenSearch Serverless) replace the local ingestion/retrieval pipeline entirely (`api_kb.py` instead of `api.py`). Most infrastructure, least code you wrote yourself — see the trade-off note in that guide before committing to it. (This replaces an earlier App Runner-based plan — App Runner closed to new customers on April 30, 2026.)
-
-## Suggested next steps
 
 1. **Break it on purpose.** Ask a question with no answer in the docs — does
    the model say "I don't know" or hallucinate? Tighten the prompt if it
    hallucinates.
-2. **Tune chunk size.** Change `chunk_size` in `build_index.py` from 300 to
-   100, then 800. Re-run and watch how retrieval quality (the `[score]`
-   values) and answer quality change.
+2. **Tune chunk size in the lab.** Run the same question at 100, 400 and 800
+   words and watch retrieval scores, answer grounding and latency move.
 3. **Add more docs** and notice when 3-chunk retrieval starts missing the
-   right passage — your signal to add hybrid search or a reranker.
+   right passage — your signal to compare BM25, hybrid and reranking in `/lab`.
 4. **Swap the vector store.** Once `index.pkl` feels clunky, replace
    `store.py`'s numpy array with Chroma — same interface, better persistence
    and scaling.
-5. **Build an eval set.** Write 15–20 questions with known answers from your
-   docs and check pass/fail after every change instead of eyeballing.
+5. **Extend the eval set.** Add questions with known-answer snippets to
+   `eval/questions.json` and watch precision@k / recall@k after every change
+   instead of eyeballing answers.
 
 ---
 

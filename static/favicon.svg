@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1d2230"/>
+      <stop offset="100%" stop-color="#101319"/>
+    </linearGradient>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#e8c17b"/>
+      <stop offset="100%" stop-color="#b88f47"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background rounded tile -->
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#bgGrad)" stroke="#d0a75f" stroke-opacity="0.35" stroke-width="2"/>
+
+  <!-- Note document sheet -->
+  <path d="M18 14 C18 12.895 18.895 12 20 12 H37 L46 21 V50 C46 51.105 45.105 52 44 52 H20 C18.895 52 18 51.105 18 50 Z" 
+        fill="#171b23" stroke="#ece7da" stroke-opacity="0.85" stroke-width="2" stroke-linejoin="round"/>
+
+  <!-- Folded top-right corner -->
+  <path d="M37 12 V21 H46" fill="none" stroke="#ece7da" stroke-opacity="0.85" stroke-width="2" stroke-linejoin="round"/>
+
+  <!-- Text lines -->
+  <line x1="24" y1="26" x2="34" y2="26" stroke="#ece7da" stroke-opacity="0.5" stroke-width="2" stroke-linecap="round"/>
+  <line x1="24" y1="33" x2="38" y2="33" stroke="#ece7da" stroke-opacity="0.5" stroke-width="2" stroke-linecap="round"/>
+  <line x1="24" y1="40" x2="32" y2="40" stroke="#ece7da" stroke-opacity="0.5" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- Golden AI sparkle -->
+  <path d="M43 34 C43 38 45 40 49 40 C45 40 43 42 43 46 C43 42 41 40 37 40 C41 40 43 38 43 34 Z" 
+        fill="url(#goldGrad)"/>
+  <circle cx="49" cy="31" r="1.5" fill="#e8c17b"/>
+</svg>

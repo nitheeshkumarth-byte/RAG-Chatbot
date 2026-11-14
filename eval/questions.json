@@ -1,0 +1,69 @@
+[
+  {
+    "question": "How does semantic chunking decide where to split?",
+    "docs": ["chunking_strategies.md"],
+    "snippets": [
+      "embed individual sentences",
+      "starting a new chunk when the topic shifts significantly"
+    ],
+    "keywords": ["sentence", "embeddings", "topic"]
+  },
+  {
+    "question": "What is the downside of very large chunks?",
+    "docs": ["chunking_strategies.md"],
+    "snippets": [
+      "may dilute the relevant part of a chunk with unrelated surrounding text"
+    ],
+    "keywords": ["dilute", "context", "ambiguity"]
+  },
+  {
+    "question": "Why do vector databases use approximate nearest neighbour search?",
+    "docs": ["vector_databases.md"],
+    "snippets": [
+      "trade a small amount of accuracy for a large speedup in search time"
+    ],
+    "keywords": ["HNSW", "IVF", "approximate", "speed"]
+  },
+  {
+    "question": "Which vector database is a Postgres extension?",
+    "docs": ["vector_databases.md"],
+    "snippets": ["pgvector", "Postgres extension"],
+    "keywords": ["pgvector", "Postgres"]
+  },
+  {
+    "question": "What does overlap between consecutive chunks prevent?",
+    "docs": ["chunking_strategies.md"],
+    "snippets": ["an important sentence from being awkwardly cut in half"],
+    "keywords": ["overlap", "sentence", "context"]
+  },
+  {
+    "question": "What is structure-aware chunking?",
+    "docs": ["chunking_strategies.md"],
+    "snippets": ["split along natural document boundaries"],
+    "keywords": ["paragraphs", "markdown headers", "sections"]
+  },
+  {
+    "question": "What chunk size range do most practical systems land between?",
+    "docs": ["chunking_strategies.md"],
+    "snippets": ["between 200 and 800 tokens"],
+    "keywords": ["200", "800", "tokens"]
+  },
+  {
+    "question": "What is FAISS?",
+    "docs": ["vector_databases.md"],
+    "snippets": ["a library, not a server"],
+    "keywords": ["FAISS", "library", "local"]
+  },
+  {
+    "question": "Which vector database is written in Rust?",
+    "docs": ["vector_databases.md"],
+    "snippets": ["written in Rust"],
+    "keywords": ["Qdrant", "Rust"]
+  },
+  {
+    "question": "What does HNSW stand for?",
+    "docs": ["vector_databases.md"],
+    "snippets": ["Hierarchical Navigable Small World"],
+    "keywords": ["HNSW", "graphs", "approximate"]
+  }
+]

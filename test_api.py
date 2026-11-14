@@ -89,6 +89,14 @@ if r.status_code == 200:
     check("TXT ingest returns chunks_added > 0", data["chunks_added"] > 0, str(data))
     check("TXT ingest returns filename", data["filename"] == "test_doc.txt", str(data))
     print(f"  txt ingest: {data}")
+    # Same file again must replace the old chunks, not duplicate them.
+    r = client.post(
+        "/ingest/file",
+        files={"file": ("test_doc.txt", io.BytesIO(content), "text/plain")},
+    )
+    again = r.json() if r.status_code == 200 else {}
+    check("Re-ingesting a file keeps the chunk count flat",
+          again.get("total_chunks") == data["total_chunks"], again)
 
 # ---- 7. Sources list updated after ingest --------------------------------
 r = client.get("/sources")
@@ -122,6 +130,14 @@ check(
     repr(answer),
 )
 print(f"  query answer (first 100): {answer[:100]!r}")
+sources = r.json().get("sources")
+check("POST /query returns a sources list", isinstance(sources, list), sources)
+check("POST /query source refs carry a snippet",
+      all(isinstance(s, dict) and s.get("source") is not None and s.get("snippet")
+          for s in sources or []), sources)
+check("POST /query source refs carry the full passage",
+      all(isinstance(s.get("text"), str) and len(s["text"]) >= len(s["snippet"])
+          for s in sources or []), sources)
 
 # ---- 10. Delete source ---------------------------------------------------
 r = client.delete("/sources/test_doc.txt")
